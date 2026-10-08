@@ -132,7 +132,8 @@ esp:
 
   # --- điều khiển bơm ---
   pc_controls_pump: false     # false: ESP tự đong theo ml/s (không cần camera)
-                              # true : PC nhìn camera điều khiển relay (PUMP_SET), cần model/vạch nước
+                              # true : PC nhìn camera điều khiển relay (PUMP_SET) - CẦN THIẾT nếu muốn
+                              #        "vừa rót vừa kiểm tra mực nước bằng model để ngắt bơm"
   pc_auto_start_on_button: true  # (chế độ PC điều khiển) bấm nút trên ESP -> PC tự bắt đầu rót
                               # true : PC nhìn vạch nước rồi điều khiển relay (PUMP_SET)
   min_duty_pct: 8             # duty nhỏ nhất còn bơm được (relay cơ băm chậm)

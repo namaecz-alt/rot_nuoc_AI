@@ -89,6 +89,15 @@ class AutoFillSession:
         self.message = "Chờ đặt cốc..."
         self.cup_meta: Dict = {}
         self.error = ""
+        # Model mực nước chỉ NGẮT được bơm khi PC điều khiển relay (vòng kín thị giác);
+        # bật model mà để ESP tự đong thì model chỉ để hiển thị -> nhắc ngay lúc khởi động.
+        self.level_hint = ""
+        if bool(cfg.get("vision.level_enable", False)) and not self.bridge.pc_controls_pump:
+            self.level_hint = ("vision.level_enable: true nhưng esp.pc_controls_pump: false -> "
+                               "model chỉ hiển thị mực nước, bơm vẫn do ESP tự đong")
+            self.log("[PC] lưu ý: %s.\n"
+                     "     Muốn 'vừa rót vừa kiểm tra mực để ngắt bơm' thì đặt "
+                     "esp.pc_controls_pump: true trong config/settings.yaml." % self.level_hint)
         self.n_recognized = 0
         self.n_rejected = 0
         self.events: List[Dict] = []
@@ -334,6 +343,8 @@ class AutoFillSession:
             tel["vision"] = self.ctl.telemetry()
         if self.last_pc_report is not None:
             tel["pc_report"] = self.last_pc_report
+        if self.level_hint:
+            tel["level_hint"] = self.level_hint
         if self.det is not None:
             tel["waterline_found"] = bool(self.det.waterline_found)
             tel["h_mm"] = round(float(self.det.water_height_mm), 2)

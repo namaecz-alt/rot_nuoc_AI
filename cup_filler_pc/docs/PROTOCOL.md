@@ -218,7 +218,7 @@ Nếu chỉ sửa **`protocol.h`** mà quên `protocol.py` (hoặc ngược lạ
 | `tools/esp_cli.py --port COM5` | bảng điều khiển thật: `status`, `ok 300`, `preset 3`, `start`, `stop`, `watch`, `tare`, `params`, `selftest`… |
 | `tools/web.py --port sim\|COM5` | giao diện web/điện thoại: ảnh camera + trạng thái bo + nút bấm tương đương phần cứng |
 | `tools/run_pc.py --port sim --synthetic --demo` | chạy THẬT chương trình của người dùng, 10 bước, in ✔/✘ |
-| `tools/test_comms.py` | 209 bài tự kiểm chứng: khung/CRC, vector vàng với C++ từng byte, luồng, web, firmware, model mực nước |
+| `tools/test_comms.py` | 211 bài tự kiểm chứng: khung/CRC, vector vàng với C++ từng byte, luồng, web, firmware, model mực nước |
 | `firmware/host_test/test_firmware_run.cpp` | chạy THẬT sketch ESP32 trên PC (máy ảo mini): khoá nút, mở khoá bằng CUP_OK, relay mức CAO, các kiểu ngắt bơm; gói firmware phát ra được `protocol.py` giải mã lại |
 | `tools/gen_protocol_vectors.py` | sinh lại `firmware/host_test/protocol_vectors.txt` sau khi sửa giao thức |
 

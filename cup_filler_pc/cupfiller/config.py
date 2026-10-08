@@ -121,6 +121,11 @@ DEFAULTS: Dict[str, Any] = {
             "min_pwm": 0.30,
             "max_pwm": 1.0,
         },
+        "level": {
+            "stop_rule": "mid",
+            "check_period_ms": 200,
+            "reach_tolerance": 0.0,
+        },
         "loop": {
             "fps": 15,
             "settle_s": 1.0,
@@ -138,6 +143,12 @@ DEFAULTS: Dict[str, Any] = {
         "require_cup": True,
         "cup_stable_frames": 4,
         "no_cup_grace_s": 1.5,
+    },
+    "vision": {
+        "level_enable": False,               # bật model mực nước (4 dải 0-/30-/60-/90-)
+        "level_model": "weights/muc_nuoc_yolo.pt",
+        "level_conf": 0.35,
+        "level_imgsz": 512,
     },
     "logging": {"level": "INFO", "file": "logs/run.log"},
     "web": {"host": "0.0.0.0", "port": 8080},

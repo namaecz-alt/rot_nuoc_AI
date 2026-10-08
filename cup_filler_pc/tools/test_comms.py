@@ -1397,6 +1397,7 @@ def test_model() -> None:
         from cupfiller.detection import CupDetection
 
         cfg2 = _load(None)
+        cfg2.set("vision.level_enable", True)       # người dùng bật model mực nước
         cfg2.set("control.level.stop_rule", "mid")
         cfg2.set("control.level.check_period_ms", 100)
 
@@ -1487,6 +1488,7 @@ def test_model() -> None:
         cfg3 = _load2(None)
         cfg3.set("camera.backend", "synthetic")
         cfg3.set("esp.port", "sim")
+        cfg3.set("vision.level_enable", True)      # người dùng bật model mực nước
         cfg3.set("esp.pc_controls_pump", True)      # PC điều khiển bơm (vòng kín thị giác)
         cfg3.set("esp.recognize_delay_s", 0.0)
         cfg3.set("esp.recognize_stable_frames", 2)
@@ -1567,6 +1569,21 @@ def test_model() -> None:
         check(sess.bridge.simulator.duty_pct == 0,
               "[ESP32 giả lập] relay về 0% sau khi ngừng (an toàn)", 
               "%d%%" % sess.bridge.simulator.duty_pct)
+
+        # nhắc nhở khi bật model mực nước nhưng ESP vẫn tự đong (model không ngắt được bơm)
+        check(not sess.telemetry().get("level_hint"),
+              "[mực nước] chế độ PC điều khiển -> KHÔNG có cảnh báo 'model chỉ hiển thị'")
+        cfg4 = _load2(None)
+        cfg4.set("esp.port", "sim")
+        cfg4.set("esp.pc_controls_pump", False)     # ESP tự đong theo ml/s
+        cfg4.set("vision.level_enable", True)       # người dùng bật model mực nước
+        sess4 = _Sess(cfg4, log=lambda m: None,
+                      level_detector=WaterLevelDetector(cfg=cfg4, predictor=predictor_sim))
+        hint = str(sess4.telemetry().get("level_hint", ""))
+        check("pc_controls_pump" in hint,
+              "[mực nước] bật model nhưng ESP tự đong -> cảnh báo phải bật esp.pc_controls_pump",
+              hint or "(không có cảnh báo)")
+        sess4.close()
         sess.close()
     except Exception as exc:                                     # pragma: no cover
         import traceback

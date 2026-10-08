@@ -45,7 +45,7 @@ pip install -r requirements_pc.txt                    # đã thêm pyserial
 python3 tools/esp_cli.py --port sim --demo            # kịch bản: đặt cốc → xác nhận → bấm nút → rót 200 ml
 python3 tools/run_pc.py --port sim --synthetic --demo  # cả hệ thống, 10 bước, không cần màn hình
 python3 tools/web.py --port sim                         # web UI chế độ ESP32 (mở trình duyệt, tự chạy)
-python3 tools/test_comms.py                           # 209 bài tự kiểm chứng (giao thức, C++, luồng, firmware chạy thật trên PC, web, model)
+python3 tools/test_comms.py                           # 211 bài tự kiểm chứng (giao thức, C++, luồng, firmware chạy thật trên PC, web, model)
 python3 tools/test_comms.py --only model              # kiểm tra model mực nước weights/muc_nuoc_yolo.pt
 ```
 
@@ -117,6 +117,9 @@ esp:
   pc_controls_pump: true             # PC điều khiển relay (vòng kín thị giác)
   pc_auto_start_on_button: true      # bấm nút trên ESP -> PC tự bắt đầu rót
 ```
+
+> **Quên `pc_controls_pump: true`?** Máy vẫn chạy nhưng ESP tự đong theo ml/s, model chỉ hiển thị
+> mực nước — chương trình in cảnh báo ngay khi khởi động (và đưa vào telemetry `level_hint`).
 
 Kiểm tra model trên máy bạn trước khi rót thật:
 
@@ -231,7 +234,7 @@ cup_filler/
 │   ├── esp_cli.py             # bảng điều khiển ESP32 (thật/giả lập): status, ok, tare, watch
 │   └── web.py                 # giao diện web (--port sim|COM5 để chạy chế độ ESP32)
 │   ├── gen_protocol_vectors.py# sinh lại vector vàng sau khi sửa giao thức
-│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (209 bài, không cần phần cứng)
+│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (211 bài, không cần phần cứng)
 ├── serial_esp32/              # PROJECT VS CODE + PLATFORMIO (mở thư mục này để nạp)
 │   ├── platformio.ini         # 2 môi trường: esp32dev (UART2) / esp32dev_usb (cáp USB)
 │   ├── include/serial_link.h  # GIAO TIẾP VỚI PC: chọn cổng, gửi/nhận khung gói tin
