@@ -207,3 +207,19 @@ python3 tools/test_comms.py                      # phải 100 % PASS
 
 Nếu chỉ sửa **`protocol.h`** mà quên `protocol.py` (hoặc ngược lại), bước 3 sẽ báo lỗi
 `byte tren day: byte N = 0x…, file vector 0x…` — đó chính là chỗ hai bên đã lệch nhau.
+
+---
+
+## 7) Công cụ đi kèm (dùng để thử giao thức này)
+
+| Công cụ | Việc dùng |
+|---|---|
+| `tools/esp_cli.py --port sim --demo` | chạy kịch bản chuẩn, in ✔/✘ từng bước, không cần phần cứng |
+| `tools/esp_cli.py --port COM5` | bảng điều khiển thật: `status`, `ok 300`, `preset 3`, `start`, `stop`, `watch`, `tare`, `params`, `selftest`… |
+| `tools/web.py --port sim\|COM5` | giao diện web/điện thoại: ảnh camera + trạng thái bo + nút bấm tương đương phần cứng |
+| `tools/run_pc.py --port sim --synthetic --demo` | chạy THẬT chương trình của người dùng, 10 bước, in ✔/✘ |
+| `tools/test_comms.py` | 116 bài tự kiểm chứng: khung/CRC, vector vàng với C++ từng byte, luồng, web, firmware |
+| `tools/gen_protocol_vectors.py` | sinh lại `firmware/host_test/protocol_vectors.txt` sau khi sửa giao thức |
+
+**Sửa giao thức thì bắt buộc chạy lại:** `python3 tools/gen_protocol_vectors.py` rồi
+`python3 tools/test_comms.py` (cả Python và C++ phải cùng đạt mới được nạp firmware).

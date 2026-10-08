@@ -14,16 +14,20 @@ Các nhóm bài:
   [3] voice     - phân tích câu tiếng Việt + đếm "tiếng" từ PCM do ESP gửi lên
   [4] flow      - kịch bản ESP32 giả lập: đặt cốc -> CUP_OK mở khoá -> nút/mic -> bơm
   [5] session   - phiên tự động thật (camera giả lập): chỉ bật camera khi có cốc
+  [7] web       - giao diện web chế độ ESP32 (Flask test client): bấm nút trên web,
+                  /api/telemetry, /api/esp, ảnh /video (kể cả khi camera đang tắt)
+  [8] cli       - bảng điều khiển tools/esp_cli.py chạy đúng kịch bản (ESP32 giả lập)
+  [9] entry     - chạy THẬT chương trình người dùng gõ: tools/run_pc.py --demo
   [6] firmware  - sketch ESP32 (esp32_cup_filler.ino + các .h) biên dịch được và
                   config.h khớp với cấu hình trên PC (preset, chân, cờ...)
   [7] cli       - bảng điều khiển tools/esp_cli.py chạy đúng kịch bản (dùng ESP giả lập)
-  [8] entry     - chạy THẬT chương trình người dùng gõ: tools/run_pc.py --demo
-                  (ESP giả lập + camera giả lập, kiểm tra đủ 10 bước của luồng thiết kế)
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import threading
 import shutil
 import subprocess
 import sys
@@ -589,7 +593,7 @@ def test_cli() -> None:
 # ==========================================================================
 def test_entry() -> None:
     """Chạy đúng lệnh mà người dùng sẽ gõ: tools/run_pc.py --port sim --synthetic --demo."""
-    print("== [8] CHẠY THẬT tools/run_pc.py --port sim --synthetic --demo ==")
+    print("== [9] CHẠY THẬT tools/run_pc.py --port sim --synthetic --demo ==")
     cmd = [sys.executable, os.path.join(ROOT, "tools", "run_pc.py"),
            "--port", "sim", "--synthetic", "--demo"]
     try:
@@ -614,12 +618,150 @@ def test_entry() -> None:
     check("CHUA MO KHOA" in out, "ESP32 giả lập cũng từ chối nút khi chưa mở khoá")
 
 
+
+# ==========================================================================
+def test_cli() -> None:
+    """Bảng điều khiển tools/esp_cli.py (ESP32 giả lập, đồng hồ tua nhanh)."""
+    print("== [8] BẢNG ĐIỀU KHIỂN esp_cli.py ==")
+    import contextlib
+    import io
+
+    try:
+        import tools.esp_cli as cli_mod
+    except Exception as exc:                                   # pragma: no cover
+        check(False, "nạp được tools/esp_cli.py", str(exc))
+        return
+
+    real_sleep = cli_mod.time.sleep
+    cli_mod.time.sleep = lambda _s: None            # tua nhanh (sim đã tính theo dt)
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            code = cli_mod.main(["--port", "sim", "--demo", "--quiet"])
+    finally:
+        cli_mod.time.sleep = real_sleep
+    out = buf.getvalue()
+
+    check(code == 0, "esp_cli.py --demo chạy xong không lỗi", "exit=%s" % code)
+    check("HẾT KỊCH BẢN" in out, "in đủ kịch bản tới bước cuối")
+    check("✘" not in out, "không bước nào bị quá thời gian chờ")
+    for needle in ("CUP_PLACED", "CUP_OK", "ESP bắt đầu bơm", "rót xong", "CUP_REMOVED",
+                   "200/200 ml"):
+        check(needle in out, "kịch bản có bước %s" % needle)
+    check("trần=300 ml" in out, "CUP_OK giới hạn được trần rót trên ESP (300 ml)")
+
+
+# ==========================================================================
+def test_web() -> None:
+    """Giao diện web ở CHẾ ĐỘ ESP32 (không cần trình duyệt, không cần phần cứng)."""
+    print("== [7] GIAO DIỆN WEB (chế độ ESP32) ==")
+    try:
+        from cupfiller.webapp import WebApp
+    except Exception as exc:                                   # pragma: no cover
+        check(False, "nạp được cupfiller/webapp.py", str(exc))
+        return
+    if WebApp is None:                                         # pragma: no cover
+        return
+
+    cfg = load_config()
+    cfg.set("camera.backend", "synthetic")
+    cfg.set("control.pump.type", "sim")
+    try:
+        app = WebApp(cfg, port="sim")
+    except RuntimeError as exc:                                # thiếu Flask
+        check(False, "tạo được WebApp chế độ ESP32", str(exc))
+        return
+    check(app.esp_mode and app.sim is not None, "WebApp chạy bằng ESP32 giả lập")
+
+    client = app.app.test_client()
+    dt = 1.0 / max(1.0, float(cfg.get("control.loop.fps", 15)))
+
+    # Vòng lặp phiên chạy trong luồng nền đúng như khi chạy thật (app.run()).
+    th = threading.Thread(target=app._loop_esp, daemon=True)
+    th.start()
+    time.sleep(0.4)
+
+    def tel() -> dict:
+        return json.loads(client.get("/api/telemetry").data.decode())
+
+    def wait(cond, timeout: float) -> dict:
+        t_end = time.time() + timeout
+        t = tel()
+        while time.time() < t_end:
+            if cond(t):
+                return t
+            time.sleep(dt)
+            t = tel()
+        return t
+
+    html = client.get("/").data.decode()
+    check("ESP32" in html and "/api/esp" in html, "trang chủ có bảng điều khiển ESP32")
+    t = tel()
+    check(t.get("esp_mode") is True and isinstance(t.get("log"), list),
+          "telemetry có esp_mode + log của phiên")
+    check(t["esp"].get("state_name") in P.STATE_NAMES.values(),
+          "ESP32 giả lập đã bắt tay và báo trạng thái", str(t["esp"].get("state_name")))
+
+    # bấm nút khi chưa có cốc -> phải bị bỏ qua
+    client.post("/api/esp", json={"action": "press", "index": 0})
+    time.sleep(0.6)
+    t = tel()
+    check(int(t["esp"].get("poured_ml") or 0) == 0 and not t["esp"].get("pumping"),
+          "bấm nút trên web khi chưa có cốc -> ESP bỏ qua")
+
+    # camera TẮT lúc này, ảnh /video phải là ảnh thay thế (không được trắng/trống)
+    buf = b""
+    resp = client.get("/video", buffered=False)
+    for chunk in resp.response:
+        buf += chunk
+        if len(buf) > 4000:
+            break
+    resp.close()
+    JPEG_SOI = bytes([0xFF, 0xD8])          # 0xFFD8 = đầu khung ảnh JPEG
+    check(JPEG_SOI in buf, "ảnh /video khi camera TẮT vẫn có khung JPEG",
+          "%d byte" % len(buf))
+
+    # đặt cốc -> camera bật -> nhận diện -> CUP_OK -> mở khoá
+    client.post("/api/esp", json={"action": "cup", "height_mm": 95})
+    t = wait(lambda t: t.get("camera_open") and (t["esp"] or {}).get("cup_present"), 6.0)
+    check(t.get("camera_open"), "đặt cốc trên web -> ESP báo -> PC BẬT CAMERA")
+    t = wait(lambda t: (t["esp"] or {}).get("unlocked") and t.get("state") == "READY", 10.0)
+    check((t["esp"] or {}).get("unlocked"), "PC xác nhận cốc -> ESP mở khoá nút/mic trên web",
+          str(t.get("cup_meta")))
+
+    # bấm nút 3 -> 200 ml
+    client.post("/api/esp", json={"action": "press", "index": 2})
+    t = wait(lambda t: t["esp"].get("pumping"), 6.0)
+    check(bool(t["esp"].get("pumping")), "bấm nút 3 trên web -> relay đóng, bơm chạy")
+    t = wait(lambda t: (t["esp"] or {}).get("state_name") == "DONE", 20.0)
+    poured = int((t["esp"] or {}).get("poured_ml") or 0)
+    check(190 <= poured <= 210, "bơm đủ 200 ml -> FILL_DONE", "đã rót %d ml" % poured)
+
+    # lệnh PC: tare / self-test / disarm
+    for act in ("tare", "selftest", "disarm"):
+        r = client.post("/api/esp", json={"action": act})
+        check(r.status_code == 200, "lệnh PC trên web: %s" % act)
+
+    # nhấc cốc
+    client.post("/api/esp", json={"action": "remove"})
+    t = wait(lambda t: not (t["esp"] or {}).get("cup_present"), 6.0)
+    check(not (t["esp"] or {}).get("cup_present"), "nhấc cốc trên web -> ESP báo CUP_REMOVED")
+
+    # hành động lạ -> 400 (không được làm sập server)
+    r = client.post("/api/esp", json={"action": "khong_co_that"})
+    check(r.status_code == 400, "hành động lạ -> trả lỗi 400 chứ không sập")
+
+    app._stop = True
+    th.join(timeout=2.0)
+    app.session.close()
+
+
 # ==========================================================================
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-cpp", action="store_true", help="bỏ bài kiểm tra biên dịch C++")
     ap.add_argument("--only", default=None,
-                    help="chỉ chạy một nhóm: protocol|cpp|voice|flow|session|firmware|cli|entry")
+                    help="chỉ chạy một nhóm: protocol|cpp|voice|flow|session|firmware|web|cli|entry")
     args = ap.parse_args()
 
     groups = {
@@ -629,6 +771,7 @@ def main() -> int:
         "flow": test_flow,
         "session": test_session,
         "firmware": lambda: test_firmware(not args.no_cpp),
+        "web": test_web,
         "cli": test_cli,
         "entry": test_entry,
     }

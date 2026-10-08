@@ -44,8 +44,21 @@ nhấc cốc, **mất UART 3 s**, giữ nút 2 s = dừng khẩn cấp. Relay lu
 pip install -r requirements_pc.txt                    # đã thêm pyserial
 python3 tools/esp_cli.py --port sim --demo            # kịch bản: đặt cốc → xác nhận → bấm nút → rót 200 ml
 python3 tools/run_pc.py --port sim --synthetic --demo  # cả hệ thống, 10 bước, không cần màn hình
-python3 tools/test_comms.py                           # 99 bài tự kiểm chứng (giao thức, C++, luồng, firmware)
+python3 tools/web.py --port sim                         # web UI chế độ ESP32 (mở trình duyệt, tự chạy)
+python3 tools/test_comms.py                           # 116 bài tự kiểm chứng (giao thức, C++, luồng, firmware, web)
 ```
+
+**Xem/điều khiển từ điện thoại hoặc máy tính (chế độ ESP32):**
+
+```bash
+python3 tools/web.py --port sim        # ESP32 giả lập: bấm "Đặt cốc" ngay trên web để xem cả luồng
+python3 tools/web.py --port COM5       # ESP32 thật: web hiện trạng thái bo, ảnh camera, ml đã rót
+```
+
+Trang web ở chế độ này hiện thêm bảng ESP32: trạng thái bo, cốc có/không, 🔒/🔓 nút đang
+khoá hay đã mở, số ml đã rót, cùng các nút thao tác như phần cứng (đặt cốc / nhấc cốc /
+bấm nút 1-5 / gửi CUP_OK / rót / dừng / tare / self-test). Camera **tắt** cho tới khi có cốc —
+lúc đó web hiện ảnh thay thế nhắc "đặt cốc lên cảm biến" chứ không bị trống.
 
 **Chạy với ESP32 thật:**
 
@@ -158,8 +171,9 @@ cup_filler/
 │   ├── web.py                 # giao diện web
 │   ├── build_report.py        # dựng báo cáo .docx
 │   ├── esp_cli.py             # bảng điều khiển ESP32 (thật/giả lập): status, ok, tare, watch
+│   └── web.py                 # giao diện web (--port sim|COM5 để chạy chế độ ESP32)
 │   ├── gen_protocol_vectors.py# sinh lại vector vàng sau khi sửa giao thức
-│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (77 bài, không cần phần cứng)
+│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (116 bài, không cần phần cứng)
 ├── firmware/                  # FIRMWARE ESP32 (Arduino)
 │   ├── esp32_cup_filler/      # config.h (sửa theo máy bạn), protocol.h, .ino, các driver
 │   └── host_test/             # test_protocol.cpp + vector vàng (chạy bằng g++ trên PC)

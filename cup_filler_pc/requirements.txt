@@ -6,7 +6,7 @@ opencv-python>=4.8          # trên Raspberry Pi OS: sudo apt install python3-op
 pyserial>=3.5
 
 # ===== Tuỳ chọn: giao diện web =====
-flask>=3.0
+flask>=3.0            # giao diện web: tools/web.py --port sim|COM5
 
 # ===== Tuỳ chọn: chỉ có trên Raspberry Pi =====
 # Cài khi chạy trên Pi thật:

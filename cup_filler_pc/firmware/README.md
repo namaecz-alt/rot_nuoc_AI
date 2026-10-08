@@ -199,6 +199,19 @@ LED sáng đều → **bấm nút** → bơm chạy.
 
 ---
 
+## 7.5) Xem trên web / điện thoại (khuyến nghị khi lắp máy thật)
+
+```bash
+python3 tools/web.py --port COM5          # rồi mở http://<ip-may>:8080
+python3 tools/web.py --port sim           # xem thử giao diện, bấm "Đặt cốc" trên web
+```
+
+Trang web hiện: ảnh camera (chỉ khi có cốc), trạng thái bo ESP32 (BOOT/IDLE/WAIT_PC/READY/
+POURING/DONE/FAULT/MANUAL), 🔒/🔓 nút đang khoá hay đã mở, số ml đã rót / mục tiêu, nhật ký
+gần nhất, cùng các nút thao tác tương đương phần cứng: **đặt cốc / nhấc cốc / bấm nút 1-5 /
+nói 1-5 tiếng / gửi CUP_OK / rót / dừng / tare / self-test** (các nút mô phỏng chỉ hiện khi
+chạy `--port sim`).
+
 ## 8) Chạy cả hệ thống (ESP32 + camera + nhận diện)
 
 ```bash

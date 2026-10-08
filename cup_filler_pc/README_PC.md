@@ -155,3 +155,22 @@ esp> params 41.0 500 60      # lưu lượng 41 ml/s, trần 500 ml, timeout 60 
 esp> tare                    # đo lại mặt khay (nhấc cốc ra trước)
 esp> watch                   # xem mọi gói tin ESP gửi lên
 ```
+
+Muốn xem trên điện thoại/máy tính khác trong mạng LAN (ảnh camera + trạng thái bo + nút bấm):
+
+```bat
+.venv\Scripts\python.exe tools\web.py --port COM5
+```
+
+rồi mở `http://<địa-chỉ-máy>:8080`. Không có bo ESP32 vẫn xem thử được toàn bộ giao diện
+bằng `--port sim` (bấm "Đặt cốc" ngay trên web).
+
+**Tự kiểm chứng toàn bộ phần giao tiếp** (không cần ESP32, không cần camera):
+
+```bat
+.venv\Scripts\python.exe tools\test_comms.py
+```
+
+Kết quả mong đợi: `116/116 bài đạt` — kiểm tra khung gói + CRC, đối chiếu firmware C++ với
+Python từng byte, đọc số tiếng Việt, luồng đặt cốc → CUP_OK → bấm nút → rót, giao diện web
+và cả chương trình `run_pc.py` thật.
