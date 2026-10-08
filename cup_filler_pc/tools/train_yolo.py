@@ -41,6 +41,14 @@ def main():
     ap.add_argument("--dataset", default=DATASET_DIR)
     args = ap.parse_args()
 
+    try:
+        import ultralytics  # noqa: F401
+    except ImportError:
+        raise SystemExit("Thiếu thư viện ultralytics (bắt buộc để train YOLO).\n"
+                         "    pip install ultralytics\n"
+                         "Muốn dùng ngay không cần train: bộ nhận diện OpenCV cổ điển\n"
+                         "(mặc định của tools/run_pc.py; xem thêm tools/detect_pc.py --classical).")
+
     img_train = os.path.join(args.dataset, "images", "train")
     if not os.path.isdir(img_train) or not any(os.scandir(img_train)):
         print("[1/3] Sinh dữ liệu tổng hợp cốc trong suốt (nhãn hộp cốc tự động)...")

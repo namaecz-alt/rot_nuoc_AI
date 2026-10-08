@@ -36,6 +36,12 @@ def main():
     ap.add_argument("--synthetic", action="store_true")
     args = ap.parse_args()
 
+    if os.name != "nt" and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        raise SystemExit("Cần màn hình để mở cửa sổ live view.\n"
+                         "Không có màn hình (SSH/Docker) thì dùng giao diện web:\n"
+                         "    python3 tools/web.py --synthetic            (chế độ thường)\n"
+                         "    python3 tools/web.py --port sim             (chế độ ESP32)")
+
     cfg = load_config(args.config)
     if args.synthetic:
         cfg.set("camera.backend", "synthetic")

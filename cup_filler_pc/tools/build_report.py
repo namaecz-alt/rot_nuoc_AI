@@ -3,6 +3,10 @@
 
 Kèm 3 sơ đồ tự vẽ (kiến trúc, quang học, máy trạng thái) và nhúng kết quả
 kiểm chứng từ report/results.json (chạy tools/test_pipeline.py trước).
+
+Cách dùng:
+    python3 tools/build_report.py                 # cần: pip install python-docx
+    python3 tools/build_report.py --figs-only     # chỉ vẽ hình, KHÔNG cần python-docx
 """
 from __future__ import annotations
 
@@ -118,9 +122,14 @@ def fig_fsm():
 
 # ---------------------------------------------------------------------------
 def build_docx(figs, results):
-    from docx import Document
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.shared import Inches, Pt, RGBColor
+    try:
+        from docx import Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Inches, Pt, RGBColor
+    except ImportError:
+        raise SystemExit("Thiếu thư viện python-docx. Cài bằng:\n"
+                         "    pip install python-docx\n"
+                         "(hoặc chạy  python3 tools/build_report.py --figs-only  để chỉ vẽ hình)")
 
     doc = Document()
     st = doc.styles["Normal"]
@@ -287,12 +296,23 @@ def build_docx(figs, results):
 
 
 def main():
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Dựng báo cáo .docx + 3 hình thiết kế")
+    ap.add_argument("--results", default=os.path.join(OUT, "results.json"),
+                    help="file kết quả kiểm chứng (do tools/test_pipeline.py sinh ra)")
+    ap.add_argument("--figs-only", action="store_true",
+                    help="chỉ vẽ 3 hình PNG (không cần python-docx)")
+    args = ap.parse_args()
+
     figs = {"arch": fig_arch(), "optics": fig_optics(), "fsm": fig_fsm()}
-    rp = os.path.join(OUT, "results.json")
-    if not os.path.exists(rp):
-        print("Chưa có results.json — chạy tools/test_pipeline.py trước.")
+    print("Đã vẽ:", ", ".join(os.path.relpath(p, ROOT) for p in figs.values()))
+    if args.figs_only:
+        return
+    if not os.path.exists(args.results):
+        print("Chưa có %s — chạy trước:  python3 tools/test_pipeline.py" % args.results)
         sys.exit(1)
-    with open(rp, encoding="utf-8") as fh:
+    with open(args.results, encoding="utf-8") as fh:
         results = json.load(fh)
     out = build_docx(figs, results)
     print("Đã sinh:", out)

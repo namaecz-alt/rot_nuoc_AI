@@ -28,6 +28,11 @@ def main():
     ap.add_argument("--labels", default=os.path.join(DATASET_DIR, "user", "labels"))
     ap.add_argument("--force", action="store_true", help="ghi đè nhãn đang có để sửa nhãn tự động")
     args = ap.parse_args()
+
+    if os.name != "nt" and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        raise SystemExit("Công cụ này cần màn hình để kéo chuột gán nhãn.\n"
+                         "Nếu đang ở máy chủ/SSH, hãy chạy trên máy có giao diện hoặc dùng\n"
+                         "tools/autolabel.py để tạo nhãn nháp rồi sửa bằng labelImg/CVAT.")
     if not os.path.isdir(args.images):
         raise SystemExit("Không tìm thấy thư mục ảnh: " + args.images)
     os.makedirs(args.labels, exist_ok=True)

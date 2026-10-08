@@ -10,15 +10,20 @@
 
 COCO YOLO chỉ là gợi ý ban đầu: cốc trong suốt có thể không được phát hiện. Nếu
 không thấy hộp, vẽ hộp thủ công trong labelImg. Chỉ cần gán hộp cốc, không gán nước.
+
+Không có thư viện ultralytics thì chương trình tự dùng bộ nhận diện OpenCV cổ điển
+(cốc trong suốt + đèn nền) để gợi ý hộp - hoặc gọi thẳng --classical.
 """
 from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 import cv2
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)                  # để import được gói cupfiller
 DATASET_DIR = os.path.join(ROOT, "datasets", "cups")
 DEFAULT_COCO = os.path.join(ROOT, "weights", "yolo11n_coco.pt")
 COCO_CUP_ID = 41
@@ -30,6 +35,9 @@ def main():
     ap.add_argument("--labels", default=os.path.join(DATASET_DIR, "user", "labels"))
     ap.add_argument("--weights", default=DEFAULT_COCO)
     ap.add_argument("--conf", type=float, default=0.25)
+    ap.add_argument("--config", default=None, help="file settings.yaml cho bộ cổ điển")
+    ap.add_argument("--classical", action="store_true",
+                    help="dùng bộ nhận diện OpenCV cổ điển thay cho YOLO")
     args = ap.parse_args()
 
     if not os.path.isdir(args.images):
@@ -41,16 +49,45 @@ def main():
     with open(os.path.join(os.path.dirname(args.images), "classes.txt"), "w", encoding="utf-8") as fh:
         fh.write("cup\n")
 
-    from ultralytics import YOLO
+    def boxes_yolo(img):
+        from ultralytics import YOLO
 
-    weight = args.weights if os.path.exists(args.weights) else "yolo11n.pt"
-    model = YOLO(weight)
-    names = model.names
-    name_list = list(names.values()) if isinstance(names, dict) else list(names)
-    names_lower = [str(v).lower() for v in name_list]
-    is_our_model = names_lower == ["cup"]
-    cup_id = 0 if is_our_model else COCO_CUP_ID
-    print("Dùng weights:", weight, "| class cup id:", cup_id)
+        weight = args.weights if os.path.exists(args.weights) else "yolo11n.pt"
+        model = YOLO(weight)
+        names = model.names
+        name_list = list(names.values()) if isinstance(names, dict) else list(names)
+        names_lower = [str(v).lower() for v in name_list]
+        cup_id = 0 if names_lower == ["cup"] else COCO_CUP_ID
+        res = model.predict(img, conf=args.conf, verbose=False)[0]
+        out = []
+        for b in res.boxes:
+            if int(b.cls[0]) != cup_id:
+                continue
+            out.append(tuple(float(v) for v in b.xyxy[0]))
+        return out, os.path.basename(weight)
+
+    def boxes_classical(img):
+        from cupfiller.config import load_config
+        from cupfiller.detection import CupDetector
+
+        det = CupDetector(load_config(args.config))
+        d = det.detect(img)
+        if not d.found:
+            return [], "OpenCV cổ điển (không thấy cốc)"
+        return [(float(d.x0), float(d.y0), float(d.x1), float(d.y1))], "OpenCV cổ điển (đèn nền)"
+
+    if args.classical:
+        boxes_fn = boxes_classical
+    else:
+        try:
+            import ultralytics  # noqa: F401
+
+            boxes_fn = boxes_yolo
+        except ImportError:
+            print("Không có thư viện ultralytics -> dùng bộ nhận diện OpenCV cổ điển.")
+            print("(muốn dùng YOLO COCO: pip install ultralytics)")
+            boxes_fn = boxes_classical
+    print("Bộ gợi ý nhãn:", "OpenCV cổ điển" if boxes_fn is boxes_classical else "YOLO")
 
     files = sorted(f for f in os.listdir(args.images)
                    if os.path.splitext(f)[1].lower() in (".png", ".jpg", ".jpeg", ".bmp"))
@@ -61,12 +98,9 @@ def main():
         if img is None:
             continue
         h, w = img.shape[:2]
-        res = model.predict(img, conf=args.conf, verbose=False)[0]
+        boxes, _src = boxes_fn(img)
         lines = []
-        for box in res.boxes:
-            if int(box.cls[0]) != cup_id:
-                continue
-            x0, y0, x1, y1 = [float(v) for v in box.xyxy[0]]
+        for x0, y0, x1, y1 in boxes:
             cx, cy = (x0 + x1) / (2 * w), (y0 + y1) / (2 * h)
             bw, bh = (x1 - x0) / w, (y1 - y0) / h
             lines.append("0 %.6f %.6f %.6f %.6f" % (cx, cy, bw, bh))
