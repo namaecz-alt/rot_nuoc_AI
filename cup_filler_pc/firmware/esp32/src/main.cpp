@@ -1,5 +1,5 @@
 /* =====================================================================
-   MAY ROT NUOC TU DONG - FIRMWARE ESP32
+   MAY ROT NUOC TU DONG - FIRMWARE ESP32  (src/main.cpp, project PlatformIO)
    ---------------------------------------------------------------------
    Vai tro cua ESP32 trong he thong:
      1. Doc CAM BIEN COC. Khi co coc -> gui goi tin $CUP,1 qua UART len
@@ -21,7 +21,13 @@
      GPIO33 <- nut DUNG            (INPUT_PULLUP)
      USB    <-> may tinh, UART 115200 8N1
 
-   Nap: Arduino IDE (chon board "ESP32 Dev Module") hoac `pio run -t upload`.
+   Bien dich / nap (PlatformIO):
+       pio run -e esp32dev                      # bien dich
+       pio run -e esp32dev -t upload            # nap
+       pio device monitor -b 115200             # xem khung tin UART
+       pio test -e native                       # 88 unit test tren PC
+   Muon dung Arduino IDE: chep toan bo file trong src/ vao mot thu muc sketch
+   va doi ten main.cpp thanh <ten_sketch>.ino (noi dung giu nguyen).
    ===================================================================== */
 #include <Arduino.h>
 

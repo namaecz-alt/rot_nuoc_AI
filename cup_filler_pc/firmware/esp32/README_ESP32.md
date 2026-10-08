@@ -64,24 +64,37 @@ với ESP32, và nên có diode bảo vệ (1N4007 song song cuộn hút relay).
 mịn ở pha rót rỉ cuối kỳ thì thay relay bằng **MOSFET** và giảm
 `SOFTPWM_PERIOD_MS` xuống 20 ms trong `config.h`.
 
-## 2) Nạp firmware
+## 2) Biên dịch và nạp firmware (PlatformIO)
 
-**Arduino IDE** (đơn giản nhất):
-
-1. Cài board ESP32: *File → Preferences*, thêm
-   `https://espressif.github.io/arduino-esp32/package_esp32_index.json`,
-   rồi *Boards Manager* → tìm "esp32" → Install.
-2. Mở `cup_filler_esp32.ino` (toàn bộ `.h`/`.cpp` trong thư mục này sẽ được
-   biên dịch cùng).
-3. Chọn board **ESP32 Dev Module**, cổng COM của mạch.
-4. Bấm **Upload**.
-
-**PlatformIO**:
+Project đã ở dạng **PlatformIO chuẩn** (`platformio.ini` + `src/` + `test/`).
 
 ```bash
+pip install platformio            # cài một lần
 cd cup_filler_pc/firmware/esp32
-pio run -t upload --upload-port COM5
+
+pio run -e esp32dev                       # biên dịch
+pio run -e esp32dev -t upload             # nạp (tự tìm cổng USB)
+pio run -e esp32dev -t upload --upload-port COM5
+pio device monitor -b 115200              # xem khung tin UART
+pio test -e native                        # 88 unit test chạy trên PC
+pio project config                        # xem cấu hình đã tính của từng env
 ```
+
+Ba môi trường trong `platformio.ini`:
+
+| Env | Dùng cho | Ghi chú |
+|---|---|---|
+| `esp32dev` | ESP32 DevKit V1 / NodeMCU-32S | mặc định, `framework = arduino` |
+| `esp32s3-sr` | ESP32-S3 + PSRAM + mic INMP441 | bật `-DVOICE_MODE=3 -DUSE_ESP_SR=1`, `lib_deps = espressif/esp-sr` |
+| `native` | PC (không có mạch) | `pio test -e native`, không cần toolchain ESP32 |
+
+Muốn đổi chân/thời gian mà không sửa `config.h`, thêm vào `build_flags` của env:
+`-DPIN_RELAY_PUMP=23 -DPIN_CUP_SENSOR=32 -DVOICE_MODE=1` (mọi tham số trong
+`config.h` đều có `#ifndef` bảo vệ).
+
+> **Arduino IDE** (nếu bạn không dùng PlatformIO): chép toàn bộ file trong
+> `src/` vào một thư mục sketch rồi đổi tên `main.cpp` thành
+> `<tên_sketch>.ino` — nội dung giữ nguyên, chọn board *ESP32 Dev Module*.
 
 ## 3) Chạy thử không cần phần cứng
 
@@ -92,7 +105,11 @@ file **không phụ thuộc Arduino**, nên biên dịch và chạy được nga
 cd cup_filler_pc/firmware/esp32
 make test     # 88 kiểm tra đơn vị (giao thức + máy trạng thái + an toàn)
 make sim      # tạo "ESP32 ảo" nối qua stdin/stdout
+make check    # cả hai
 ```
+
+`make` và `pio test -e native` biên dịch **cùng một bộ nguồn** trong `src/`;
+`make` chỉ cần `g++` nên chạy được ở nơi không cài được PlatformIO.
 
 Sau đó chạy thử cả hệ thống trên máy tính:
 
@@ -184,18 +201,30 @@ ghi đè lúc chạy bằng tin `CFG`.
 
 ```
 firmware/esp32/
-├── cup_filler_esp32.ino      # vòng lặp Arduino (setup/loop)
-├── config.h                  # CHÂN + THAM SỐ (sửa ở đây)
-├── device_fsm.h/.cpp         # máy trạng thái: cảm biến, nút, mic, relay, watchdog
-├── uart_protocol.h/.cpp      # đóng/gói khung tin + CRC (không phụ thuộc Arduino)
-├── voice_input.h/.cpp        # đầu vào giọng nói (GPIO / UART / ESP-SR)
-├── voice_input_espsr.cpp     # tuỳ chọn ESP32-S3 + ESP-SR
-├── board_io.h                # lớp che GPIO
-├── board_io_arduino.cpp      #   ... cho ESP32 thật
-├── link_io.h                 # lớp che UART
-├── link_io_arduino.cpp       #   ... cho ESP32 thật
-├── host/                     # mô phỏng trên PC (g++): GPIO ảo + "ESP32 ảo"
-├── test/test_firmware.cpp    # 88 kiểm tra đơn vị
-├── Makefile                  # make test / make sim
-└── platformio.ini
+├── platformio.ini            # 3 env: esp32dev / esp32s3-sr / native
+├── src/                      # FIRMWARE (src_dir của PlatformIO)
+│   ├── main.cpp              # setup()/loop() - điểm vào Arduino
+│   ├── config.h              # CHÂN + THAM SỐ (sửa ở đây)
+│   ├── device_fsm.h/.cpp     # máy trạng thái: cảm biến, nút, mic, relay, watchdog
+│   ├── uart_protocol.h/.cpp  # đóng/gói khung tin + checksum (không phụ thuộc Arduino)
+│   ├── voice_input.h/.cpp    # đầu vào giọng nói (GPIO / UART / ESP-SR)
+│   ├── voice_input_espsr.cpp # tuỳ chọn ESP32-S3 + ESP-SR
+│   ├── board_io.h            # lớp che GPIO
+│   ├── board_io_arduino.cpp  #   ... cho ESP32 thật
+│   ├── link_io.h             # lớp che UART
+│   └── link_io_arduino.cpp   #   ... cho ESP32 thật
+├── test/test_firmware/       # unit test (pio test -e native / make test)
+├── host/                     # GPIO ảo + "ESP32 ảo" chạy trên PC
+└── Makefile                  # make test / make sim (không cần PlatformIO)
 ```
+
+## 9) Trạng thái kiểm chứng
+
+| Hạng mục | Trạng thái |
+|---|---|
+| `make test` — 88 kiểm tra đơn vị (giao thức, cảm biến, nút, mic, soft-PWM, 4 ca an toàn) | **đã chạy, 88/88 đạt** |
+| `pio project config` — PlatformIO đọc đúng 3 env | **đã chạy** |
+| `pio test -e native` — thu thập test (`Collected 1 tests (test_firmware)`) | **đã chạy tới bước tải platform** |
+| `pio run -e esp32dev -t upload` — nạp lên mạch thật | **chưa chạy**: môi trường phát triển không tải được platform `espressif32`; cần bạn nạp thử một lần |
+| `src/voice_input_espsr.cpp` (ESP32-S3 + ESP-SR) | **chưa biên dịch** (cần ESP32-S3 + thư viện esp-sr) |
+| Module giọng nói SU-03T/LD3320 (`VOICE_MODE` 1/2) | logic đã kiểm chứng bằng unit test ở chế độ 1; **chưa cắm module thật** |

@@ -46,6 +46,8 @@ quá 800 ms thì ESP32 tự cắt relay; nhả cốc giữa chừng thì cắt r
 tin sau. Toàn bộ có kiểm tra đơn vị.
 
 * Firmware, sơ đồ nối, bảng giao thức: [`firmware/esp32/README_ESP32.md`](firmware/esp32/README_ESP32.md)
+* Nạp firmware: `cd firmware/esp32 && pio run -e esp32dev -t upload`
+  (project PlatformIO chuẩn; cũng chạy được bằng Arduino IDE — xem README trên)
 * Chạy thử không cần phần cứng: `make -C firmware/esp32 test` (88 kiểm tra),
   `python tools/test_esp.py`, `python tools/run_esp.py --sim --synthetic --auto-test`
 
@@ -127,7 +129,7 @@ cup_filler/
 │   ├── serial_link.py         # giao thức UART với ESP32 (bản Python)
 │   ├── host_app.py            # điều phối phía PC: chờ CUP,1 -> bật camera -> ACK -> rót
 │   └── esp_sim.py             # "ESP32 ảo" bằng Python (chạy thử không cần nạp)
-├── firmware/esp32/            # FIRMWARE ESP32 (Arduino/PlatformIO) + unit test C++
+├── firmware/esp32/            # FIRMWARE ESP32 - project PlatformIO (src/, test/, host/)
 ├── weights/yolo11n_coco.pt    # pretrained COCO (cup), chạy ngay
 ├── weights/cup_yolo.pt        # model của bạn sau khi train
 ├── tools/

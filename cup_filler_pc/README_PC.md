@@ -100,7 +100,7 @@ báo `ACK,1` xuống; lúc đó ESP32 mới cho phép bấm nút chọn mức ho
 
 ```bat
 pip install pyserial
-:: nạp firmware cho ESP32 trước (Arduino IDE hoặc: cd firmware\esp32 && pio run -t upload)
+:: nạp firmware cho ESP32 trước: cd firmware\esp32 && pio run -e esp32dev -t upload
 .venv\Scripts\python.exe tools\run_esp.py --port COM5 --camera 0
 ```
 
@@ -123,7 +123,7 @@ cup_filler/
 ├── weights/yolo11n_coco.pt        # model COCO có sẵn lớp cup, chạy ngay
 ├── weights/cup_yolo.pt            # xuất hiện sau khi bạn train model riêng
 ├── cupfiller/                     # mã detector/controller/camera/pump
-├── firmware/esp32/                # firmware ESP32 + unit test (make test / make sim)
+├── firmware/esp32/                # project PlatformIO: src/ + test/ (pio test -e native)
 ├── tools/detect_pc.py             # nhận diện webcam/ảnh/video
 ├── tools/run_pc.py                # UI demo + dry-run
 ├── tools/run_esp.py               # chạy với ESP32 thật (--port COM5) hoặc --sim
