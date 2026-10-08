@@ -558,6 +558,78 @@ def test_firmware(use_cpp: bool = True) -> None:
     check(int(define_us("BUTTON_ESTOP_MS", "0")) > int(define_us("BUTTON_LONG_MS", "0")),
           "giữ nút 2 s = dừng khẩn cấp (lâu hơn ngưỡng chọn mức)")
 
+    # ---- project VS Code + PlatformIO (platformio.ini) ----
+    pio_path = os.path.join(ROOT, "firmware", "platformio.ini")
+    pio = open(pio_path, encoding="utf-8").read() if os.path.exists(pio_path) else ""
+    check(bool(pio), "có firmware/platformio.ini để mở bằng VS Code + PlatformIO", pio_path)
+    if pio:
+        check(re.search(r"^\s*src_dir\s*=\s*esp32_cup_filler\s*(;.*)?$", pio, re.M) is not None,
+              "platformio.ini trỏ src_dir vào thư mục chứa esp32_cup_filler.ino")
+        check(re.search(r"^\s*board\s*=\s*esp32dev\s*(;.*)?$", pio, re.M) is not None,
+              "platformio.ini dùng board esp32dev = ESP32 DevKit V1")
+        check(re.search(r"^\s*framework\s*=\s*arduino\s*(;.*)?$", pio, re.M) is not None,
+              "platformio.ini dùng framework arduino")
+        check("[env:esp32dev]" in pio and "[env:esp32dev_usb]" in pio,
+              "có 2 môi trường: esp32dev (UART2) và esp32dev_usb (cổng USB của board)")
+        check(pio.count("monitor_speed = 115200") >= 1, "monitor_speed 115200 khớp debug Serial")
+        check("upload_speed = 921600" in pio, "upload_speed 921600 như README hướng dẫn")
+        check("-DUART_USE_USB_SERIAL=1" in pio and "-DDEBUG_SERIAL=0" in pio,
+              "env dùng cổng USB bật UART_USE_USB_SERIAL=1 kèm DEBUG_SERIAL=0 (đúng yêu cầu firmware)")
+        for f in ("extensions.json", "settings.json"):
+            check(os.path.exists(os.path.join(ROOT, "firmware", ".vscode", f)),
+                  "có firmware/.vscode/%s cho VS Code" % f)
+
+    # ---- mô phỏng bước PlatformIO sinh prototype cho .ino (nếu máy có PlatformIO) ----
+    try:
+        import importlib.util
+        has_pio = importlib.util.find_spec("platformio") is not None
+    except Exception:
+        has_pio = False
+    if not has_pio:
+        print("   (không có PlatformIO trên máy này -> bỏ qua bước chuyển .ino -> .cpp)")
+    else:
+        from platformio.builder.tools.pioino import InoToCPPConverter
+
+        class _Node:
+            def __init__(self, path):
+                self.path = path
+
+            def get_path(self):
+                return self.path
+
+        class _Env:
+            def VerboseAction(self, cmd, text):
+                return cmd
+
+            def Execute(self, cmd):
+                return subprocess.call(cmd.replace("$CXX", "g++ -std=c++11 -w -I %s -I %s"
+                                                   % (os.path.join(ROOT, "firmware", "esp32_cup_filler"),
+                                                      os.path.join(ROOT, "firmware", "host_test",
+                                                                   "arduino_stub"))),
+                                       shell=True) == 0
+
+        ino_path = os.path.join(ROOT, "firmware", "esp32_cup_filler", "esp32_cup_filler.ino")
+        try:
+            conv = InoToCPPConverter(_Env())
+            cpp = conv.convert([_Node(ino_path)])
+            text_cpp = open(cpp, encoding="utf-8", errors="replace").read()
+            ok_p = all(("%s(" % n) in text_cpp for n in ("setup", "loop", "pollSensorFault"))
+            check(ok_p and "#include <Arduino.h>" in text_cpp,
+                  "PlatformIO chuyển .ino -> .cpp có sinh prototype đầy đủ (setup/loop/...)")
+            obj = os.path.join(tempfile.gettempdir(), "pio_ino_check.o")
+            r = subprocess.run(["g++", "-std=c++11", "-O2", "-Wall", "-c", "-o", obj, cpp,
+                                "-I", os.path.join(ROOT, "firmware", "esp32_cup_filler"),
+                                "-I", os.path.join(ROOT, "firmware", "host_test"),
+                                "-I", os.path.join(ROOT, "firmware", "host_test", "arduino_stub")],
+                               capture_output=True, text=True)
+            check(r.returncode == 0 and "warning:" not in (r.stderr or ""),
+                  "file .cpp do PlatformIO sinh ra biên dịch sạch (không cảnh báo)",
+                  (r.stderr or "")[-200:])
+            if os.path.exists(cpp):
+                os.remove(cpp)                    # dọn file .cpp sinh ra khi kiểm tra
+        except Exception as exc:                  # pragma: no cover
+            check(False, "mô phỏng bước chuyển .ino -> .cpp của PlatformIO", str(exc)[:200])
+
     # giao thức trong protocol.h phải có đủ mã gói tin hai bên dùng
     ph = open(os.path.join(ROOT, "firmware", "esp32_cup_filler", "protocol.h"),
               encoding="utf-8").read()

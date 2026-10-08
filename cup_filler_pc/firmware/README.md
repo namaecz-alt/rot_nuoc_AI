@@ -149,15 +149,49 @@ chuyện với phần mềm PC qua chính cổng đó, **không cần thêm linh
 > Bộ test trên PC chạy **cả hai** cấu hình này: `python3 tools/test_comms.py --only fwrun`
 > sẽ biên dịch và chạy 45 bài kiểm tra hai lần (UART2 và cổng USB).
 
-### Nạp bằng PlatformIO (nếu bạn thích dòng lệnh)
+### Nạp bằng VS Code + PlatformIO (khuyến nghị nếu bạn viết code trên VS Code)
+
+Thư mục `firmware/` **đã là một project PlatformIO hoàn chỉnh** (`platformio.ini` +
+`.vscode/`), không cần `pio project init`:
+
+1. Cài extension **PlatformIO IDE** trong VS Code (`Ctrl+Shift+X` → tìm *PlatformIO IDE*).
+2. `File ▸ Open Folder...` → chọn thư mục **`cup_filler_pc/firmware`** (chính thư mục có
+   `platformio.ini`). PlatformIO sẽ tự tải ESP32 platform + toolchain trong lần build đầu
+   (vài trăm MB, chỉ một lần).
+3. Ở **thanh trạng thái dưới cùng**, chọn môi trường:
+   * **`esp32dev`** – mặc định: ESP nói chuyện với PC qua UART2 (GPIO16/17) + mạch USB-TTL,
+     còn cổng USB của board dùng để xem log.
+   * **`esp32dev_usb`** – khi **không có mạch USB-TTL**: ESP nói chuyện với PC bằng chính
+     cổng USB của board (firmware đã bật `UART_USE_USB_SERIAL=1` và tắt log cho khỏi lẫn gói tin).
+4. Bấm **✓ Build** rồi **→ Upload**. Xem log: biểu tượng **phích cắm** (Serial Monitor) –
+   `esp32dev`: 115200 baud · `esp32dev_usb`: 921600 baud và **đừng mở khi đang chạy
+   phần mềm PC** (mở là board bị reset + nhiễu gói tin).
+
+Lệnh tương đương trong terminal VS Code:
 
 ```bash
-pip install platformio
-cd firmware
-pio project init --board esp32dev      # chỉ chạy lần đầu
-pio run -t upload                       # nạp
-pio device monitor -b 115200            # xem log
+pio run                       # biên dịch (env esp32dev)
+pio run -t upload             # nạp
+pio device monitor            # xem log tiếng Việt (115200)
+pio run -e esp32dev_usb -t upload    # nạp bản dùng cổng USB của board
+pio run -t erase               # xoá flash (khi board "cứng đầu", nạp mãi không được)
 ```
+
+Vài lưu ý khi dùng PlatformIO:
+
+* Chỉ thư mục **`esp32_cup_filler/`** được build (`src_dir` trong `platformio.ini`),
+  `host_test/` là bộ test chạy trên máy tính nên **không** bị PlatformIO biên dịch.
+* Sau mỗi lần build, PlatformIO sinh file `esp32_cup_filler.ino.cpp` cạnh file `.ino`
+  (nó chuyển `.ino` → `.cpp` để sinh prototype cho `setup()`, `loop()`...). File này đã
+  được `.gitignore` bỏ qua — **đừng sửa tay**, sửa code trong `.ino` và các `.h`.
+* `pio device monitor` ở env `esp32dev_usb` sẽ làm board reset và hiện dữ liệu nhị phân —
+  đó là kênh dữ liệu 921600, không phải log.
+* Bộ test trên PC cũng kiểm tra luôn file `platformio.ini`, `.vscode/`, và **mô phỏng đúng
+  bước sinh prototype của PlatformIO** rồi biên dịch file `.cpp` đó (nếu máy có cài
+  PlatformIO): `python3 tools/test_comms.py --only firmware`.
+
+Nếu vẫn thích nạp bằng Arduino IDE thì dùng hướng dẫn ở §3 phía trên (Board: **ESP32 Dev
+Module** — cùng một board, hai cách nạp, dùng chung `config.h`).
 
 > Firmware chỉ dùng `Arduino.h` + thư viện chuẩn của core ESP32. Nếu bạn đổi `MIC_TYPE` sang **2**
 > (mic I2S), một số bản core ESP32 3.x mới đã bỏ `driver/i2s.h` — khi đó hãy để `MIC_TYPE 1`
@@ -313,7 +347,7 @@ Bộ kiểm tra trên PC đối chiếu **từng byte** giữa C++ trong firmwar
 các kịch bản (khoá nút → CUP_OK → bơm → nhấc cốc → ngắt bơm):
 
 ```bash
-python3 tools/test_comms.py                 # toàn bộ (157 bài)
+python3 tools/test_comms.py                 # toàn bộ (169 bài)
 python3 tools/test_comms.py --only firmware # chỉ phần config/sketch
 python3 tools/test_comms.py --only fwrun    # CHẠY THẬT firmware trên PC (máy ảo mini)
 ```

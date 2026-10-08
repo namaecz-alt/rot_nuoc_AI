@@ -11,17 +11,27 @@ env/
 
 # Dữ liệu / mô hình sinh ra trong lúc chạy (không cần đưa lên git)
 cup_filler_pc/datasets/_auto/
-cup_filler_pc/datasets/cups/images/       # dataset tổng hợp do train_yolo.py sinh (lớn, sinh lại được)
+# dataset tổng hợp do tools/train_yolo.py sinh (lớn, sinh lại được)
+cup_filler_pc/datasets/cups/images/
 cup_filler_pc/datasets/cups/labels/
-cup_filler_pc/datasets/cups/data.yaml     # chứa đường dẫn tuyệt đối của từng máy
-cup_filler_pc/config/calibration.json    # hiệu chuẩn riêng của từng máy (do tools/calibrate.py sinh)
+cup_filler_pc/datasets/cups/data.yaml
+# hiệu chuẩn riêng của từng máy (do tools/calibrate.py sinh)
+cup_filler_pc/config/calibration.json
 cup_filler_pc/logs/
 cup_filler_pc/weights/*.onnx
 runs/
 *.pt.tmp
+
+# PlatformIO: thư mục build + file .cpp sinh ra từ .ino (sinh lại được khi pio run)
+.pio/
+*.ino.cpp
 
 # IDE / hệ điều hành
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+# (ngoại lệ) cấu hình VS Code + PlatformIO: giữ lại để mở thư mục firmware là chạy được
+!cup_filler_pc/firmware/.vscode/
+!cup_filler_pc/firmware/.vscode/**
