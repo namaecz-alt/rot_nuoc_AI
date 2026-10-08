@@ -2,3 +2,6 @@
 numpy>=1.24
 opencv-python>=4.8
 ultralytics>=8.3
+
+# ===== Kết nối ESP32 qua UART (cáp USB-TTL / cổng COM) =====
+pyserial>=3.5

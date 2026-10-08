@@ -10,6 +10,54 @@ Chạy trên **Raspberry Pi 4 + Camera Module / webcam USB**, hoặc chạy gi�
        → vòng kín tinh chỉnh theo vạch nước → lắng → bù xung nhỏ → XONG
 ```
 
+## 🤖 Bo ESP32 (phần cứng rời) — UART hai chiều với máy tính
+
+Từ bản này, hệ thống có thêm **bo điều khiển ESP32** lo cảm biến cốc, nút bấm, mic và relay bơm;
+máy tính chỉ lo **nhận diện cốc**. Hai bên nói chuyện qua **UART** (khung `AA 55 … CRC-16`,
+xem [`docs/PROTOCOL.md`](docs/PROTOCOL.md), firmware ở [`firmware/`](firmware/README.md)).
+
+Luồng đúng theo yêu cầu thiết kế:
+
+```
+  đặt cốc vào khay (cảm biến siêu âm/HC-SR04)
+        │
+        ▼  ESP32 gửi CUP_PLACED qua UART
+  PC MỚI BẬT CAMERA → nhận diện cốc → đo hình học → tính thể tích rót được
+        │  PC gửi CUP_OK (bán kính, chiều cao, rót tối đa bao nhiêu ml)
+        ▼
+  ESP32 MỞ KHOÁ nút bấm + mic   ← trước đó bấm/nói đều bị bỏ qua
+        │  người dùng BẤM NÚT (tích cực mức THẤP, INPUT_PULLUP)
+        │  hoặc NÓI vào mic (ESP gửi PCM lên PC nhận dạng tiếng Việt)
+        ▼
+  RELAY (TÍCH CỰC MỨC CAO) → BƠM NƯỚC tới mức đã chọn
+        │  nhấc cốc → ESP tự ngắt bơm NGAY, báo CUP_REMOVED → PC đóng camera
+        ▼
+      XONG
+```
+
+Phía ESP32 tự lo toàn bộ an toàn (không trông chờ PC): quá `MAX_FILL_ML`, quá thời gian,
+nhấc cốc, **mất UART 3 s**, giữ nút 2 s = dừng khẩn cấp. Relay luôn OFF khi khởi động.
+
+**Thử ngay không cần phần cứng** (ESP32 giả lập chạy trong tiến trình):
+
+```bash
+pip install -r requirements_pc.txt                    # đã thêm pyserial
+python3 tools/esp_cli.py --port sim --demo            # kịch bản: đặt cốc → xác nhận → bấm nút → rót 200 ml
+python3 tools/run_pc.py --port sim --auto --synthetic # cả hệ thống: camera giả lập + ESP giả lập
+python3 tools/test_comms.py                           # 77 bài tự kiểm chứng (giao thức, C++, luồng, firmware)
+```
+
+**Chạy với ESP32 thật:**
+
+```bash
+python3 tools/esp_cli.py --port COM5                  # bảng điều khiển: status, ok 300, tare, watch...
+python3 tools/run_pc.py --port COM5                   # cả hệ thống (Windows: run_esp_windows.bat)
+python3 tools/run_pc.py --port /dev/ttyUSB0           # Linux/macOS
+```
+
+Sơ đồ dây, cách nạp firmware và hiệu chuẩn lưu lượng: **[`firmware/README.md`](firmware/README.md)**.
+Mọi thứ cần chỉnh cho đúng máy của bạn nằm ở **`firmware/esp32_cup_filler/config.h`**.
+
 ## Kết quả tự kiểm chứng (không cần phần cứng, xem `report/`)
 
 | Hạng mục | Kết quả |
@@ -83,6 +131,13 @@ python tools/run_pc.py --synthetic
 ```
 cup_filler/
 ├── cupfiller/                 # thư viện lõi (detection/controller/camera/pump/webapp)
+│   ├── protocol.py            # giao thức UART với ESP32 (đóng/mở khung, CRC-16)
+│   ├── esp_bridge.py          # điều khiển ESP32 từ PC + an toàn liên lạc
+│   ├── esp_sim.py             # ESP32 GIẢ LẬP (chạy toàn luồng, không cần phần cứng)
+│   ├── serial_link.py         # COM/tcp/loopback/sim
+│   ├── session.py             # phiên tự động: chỉ mở camera khi có cốc
+│   ├── voice_pc.py            # nhận dạng mức nước tiếng Việt (PCM từ ESP32)
+│   └── protocol_vectors.py    # 44 vector vàng đối chiếu Python ↔ C++
 │   ├── detection_yolo.py      # YOLO tìm cốc + CV đo vạch nước
 │   └── yolo_dataset.py        # sinh dataset có nhãn tổng hợp
 ├── weights/yolo11n_coco.pt    # pretrained COCO (cup), chạy ngay
@@ -97,7 +152,14 @@ cup_filler/
 │   ├── live.py                # live view Pi
 │   ├── calibrate.py           # hiệu chuẩn Pi
 │   ├── web.py                 # giao diện web
-│   └── build_report.py        # dựng báo cáo .docx
+│   ├── build_report.py        # dựng báo cáo .docx
+│   ├── esp_cli.py             # bảng điều khiển ESP32 (thật/giả lập): status, ok, tare, watch
+│   ├── gen_protocol_vectors.py# sinh lại vector vàng sau khi sửa giao thức
+│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (77 bài, không cần phần cứng)
+├── firmware/                  # FIRMWARE ESP32 (Arduino)
+│   ├── esp32_cup_filler/      # config.h (sửa theo máy bạn), protocol.h, .ino, các driver
+│   └── host_test/             # test_protocol.cpp + vector vàng (chạy bằng g++ trên PC)
+├── docs/PROTOCOL.md           # đặc tả giao thức UART ESP32 ↔ PC
 ├── datasets/cups/user/        # thêm ảnh và nhãn của bạn ở đây
 ├── web/simulation.html        # mô phỏng tương tác
 └── report/                    # kết quả test + tài liệu thiết kế
@@ -110,6 +172,8 @@ pip install -r requirements.txt
 python3 tools/test_pipeline.py           # số liệu kiểm chứng + biểu đồ
 python3 tools/live.py --synthetic        # cửa sổ live giả lập
 python3 tools/web.py --synthetic        # web UI tại http://localhost:8080
+python3 tools/test_comms.py              # ESP32 ↔ PC: giao thức + C++ + luồng + firmware
+python3 tools/esp_cli.py --port sim --demo   # kịch bản ESP32 giả lập (đặt cốc → rót)
 ```
 Mở `web/simulation.html` trong trình duyệt để xem mô phỏng trực quan.
 

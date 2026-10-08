@@ -94,3 +94,38 @@ logging:
 web:
   host: "0.0.0.0"
   port: 8080
+
+# ===========================================================================
+#  ESP32 (bo điều khiển phần cứng: cảm biến cốc, nút bấm, mic, relay bơm)
+#  Giao thức UART: xem docs/PROTOCOL.md   -   firmware: firmware/README.md
+# ===========================================================================
+esp:
+  port: "sim"                 # sim = ESP32 giả lập | COM5 | /dev/ttyUSB0 | tcp://host:port
+  baud: 921600                # phải khớp UART_BAUD trong firmware/esp32_cup_filler/config.h
+  link_timeout_s: 3.0         # PC không nhận gói nào bấy lâu -> coi như mất liên lạc
+  ping_period_s: 1.0          # PC gửi PING giữ nhịp tim (ESP tự ngắt bơm nếu mất)
+  sim_flow_ml_s: 40.0         # lưu lượng của ESP giả lập (ml/s) - khớp FLOW_ML_PER_S
+
+  # --- cửa sổ nhận diện: camera CHỈ mở khi cảm biến báo có cốc (tiết kiệm điện) ---
+  auto_camera: true
+  camera_idle_close_s: 20.0   # rảnh bấy lâu thì đóng camera
+  recognize_delay_s: 0.25     # chờ cốc đứng yên sau khi đặt
+  recognize_timeout_s: 6.0    # quá lâu chưa nhận ra -> gửi CUP_REJECT
+  recognize_stable_frames: 4  # số khung ổn định cần có trước khi chốt
+  dry_run: false              # true = không mở camera (chỉ thử giao thức)
+
+  # --- điều khiển bơm ---
+  pc_controls_pump: false     # false: ESP tự đong theo ml/s (không cần camera)
+                              # true : PC nhìn vạch nước rồi điều khiển relay (PUMP_SET)
+  min_duty_pct: 8             # duty nhỏ nhất còn bơm được (relay cơ băm chậm)
+  default_preset_index: 2     # 0..4 = 100/150/200/250/300 ml
+  auto_hello_ack: true        # tự trả lời HELLO của ESP32
+
+  # --- mic / giọng nói ---
+  voice_mode: 2               # 1 = ESP tự đếm "tiếng", 2 = gửi PCM lên PC nhận dạng
+  audio_sample_rate: 16000
+
+voice:
+  engine: "auto"              # auto | vosk | peaks  (peaks = đếm số "tiếng")
+  vosk_model: ""              # thư mục model Vosk tiếng Việt (tải riêng), vd: models/vosk-vn
+  auto_start: true            # nhận ra mức nước -> gửi lệnh bơm luôn

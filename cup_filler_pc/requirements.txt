@@ -2,6 +2,9 @@
 numpy>=1.24
 opencv-python>=4.8          # trên Raspberry Pi OS: sudo apt install python3-opencv
 
+# ===== Kết nối ESP32 qua UART (bắt buộc nếu dùng bo ESP32) =====
+pyserial>=3.5
+
 # ===== Tuỳ chọn: giao diện web =====
 flask>=3.0
 

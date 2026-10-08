@@ -15,6 +15,14 @@ Chạy:
     python3 tools/run_pc.py --synthetic     # không cần camera
     python3 tools/run_pc.py --yolo          # bật YOLO cho hộp cốc (model COCO/custom)
 
+Chế độ ESP32 (đặt cốc → PC bật camera → nhận diện → gửi CUP_OK → mở khoá nút/mic):
+    python3 tools/run_pc.py --port sim --synthetic    # thử không cần gì cả
+    python3 tools/run_pc.py --port COM5               # ESP32 thật (Windows)
+    python3 tools/run_pc.py --port /dev/ttyUSB0       # ESP32 thật (Linux/macOS)
+Trong chế độ này camera TỰ BẬT khi ESP báo có cốc và TỰ TẮT khi rảnh, nút bấm trên
+ESP32 chỉ hoạt động sau khi PC xác nhận cốc (đúng yêu cầu thiết kế). Thêm --classic
+nếu muốn chạy kiểu cũ (không cần ESP32).
+
 Phím:
     1..5   chọn mức rót (100/150/200/250/300 ml)
     s      bắt đầu rót          e      dừng
@@ -59,8 +67,92 @@ def make_detector(cfg, args):
         return CupDetector(cfg), "co dien (backlight)"
 
 
+def run_auto(cfg, args, det, det_name, scene):
+    """CHẾ ĐỘ ESP32: camera chỉ mở khi cảm biến báo có cốc; nút/mic do ESP32 giữ khoá."""
+    from cupfiller.session import AutoFillSession
+
+    sess = AutoFillSession(cfg, port=args.port, detector=det, scene=scene,
+                           on_state=lambda name, fields: None)
+    dt = 1.0 / max(1.0, float(cfg.get("control.loop.fps", 15)))
+    show_boxes = True
+    print("Chế độ ESP32 : %s" % args.port)
+    print("Detector     : %s" % det_name)
+    print("Luồng        : đặt cốc → ESP báo PC → BẬT CAMERA → nhận diện → CUP_OK → ")
+    print("               mở khoá nút/mic → bấm nút (hoặc nói) → bơm → nhấc cốc")
+    print("Phím         : 1..5 chọn mức qua PC | s rót | e dừng | t chụp ảnh | q thoát")
+    while True:
+        t0 = time.time()
+        sess.tick(dt)
+        tel = sess.telemetry()
+        esp = tel.get("esp") or {}
+        frame = sess.frame
+        if frame is None:
+            # không có camera (chưa có cốc hoặc --esp.dry_run): vẫn hiện bảng trạng thái
+            os.system("cls" if os.name == "nt" else "clear")
+            print("=== MÁY RÓT NƯỚC — chế độ ESP32 ===")
+            print("ESP  : %s | cốc=%s | PC xác nhận=%s | bơm=%s | %s/%s ml"
+                  % (esp.get("state_name"), _yn(esp.get("cup_present")),
+                     _yn(esp.get("pc_confirmed")), _yn(esp.get("pumping")),
+                     esp.get("poured_ml"), esp.get("target_ml")))
+            print("PC   : %-16s %s" % (tel.get("state"), tel.get("message")))
+            print("Cốc  : %s" % (tel.get("cup_meta") or "chưa nhận diện"))
+            if tel.get("error"):
+                print("LỖI  : %s" % tel["error"])
+            key = cv2.waitKey(100) & 0xFF
+            if key == ord("q"):
+                break
+            if ord("1") <= key <= ord("5"):
+                sess.press_preset(key - ord("1"))
+            elif key == ord("s"):
+                sess.start_from_pc()
+            elif key == ord("e"):
+                sess.stop_from_pc()
+            continue
+
+        vis = draw_overlay(
+            frame, sess.det,
+            target_mm=(tel.get("vision") or {}).get("target_mm"),
+            text=[
+                "ESP: %s | xác nhận=%s | bơm=%s" % (esp.get("state_name"),
+                                                    _yn(esp.get("pc_confirmed")),
+                                                    _yn(esp.get("pumping"))),
+                "PC : %s - %s" % (tel.get("state"), tel.get("message")),
+                "cốc: %s" % (tel.get("cup_meta") or "chưa nhận diện"),
+                tel.get("error") or "",
+            ],
+        )
+        if show_boxes and hasattr(det, "last_boxes"):
+            for (x0, y0, x1, y1, sc) in det.last_boxes:
+                cv2.rectangle(vis, (int(x0), int(y0)), (int(x1), int(y1)), (255, 200, 0), 2)
+        cv2.imshow("may_rot_nuoc", vis)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord("q"):
+            break
+        elif ord("1") <= key <= ord("5"):
+            sess.press_preset(key - ord("1"))
+        elif key == ord("s"):
+            sess.start_from_pc()
+        elif key == ord("e"):
+            sess.stop_from_pc()
+        elif key == ord("d"):
+            show_boxes = not show_boxes
+        took = time.time() - t0
+        if took < dt:
+            time.sleep(dt - took)
+    sess.close()
+    cv2.destroyAllWindows()
+
+
+def _yn(value):
+    return "có" if value else "không"
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--port", default=None,
+                    help="cổng ESP32: sim | COM5 | /dev/ttyUSB0 | tcp://host:port")
+    ap.add_argument("--classic", action="store_true",
+                    help="chạy kiểu cũ (không dùng ESP32) dù có --port")
     ap.add_argument("--camera", default="0")
     ap.add_argument("--video", default=None)
     ap.add_argument("--synthetic", action="store_true")
@@ -89,6 +181,16 @@ def main():
     print("Da mo camera (%s). Dang khoi tao detector..." % getattr(cam, "backend_api", cam.backend), flush=True)
     pump = open_pump(cfg, getattr(cam, "synthetic", None))
     det, det_name = make_detector(cfg, args)
+
+    if args.port and not args.classic:
+        # chế độ ESP32: camera mở/đóng theo cảm biến cốc của ESP32
+        if args.port == "sim":
+            cfg.set("control.pump.type", "sim")
+        print("Da mo camera se do ESP32 dieu khien (%s)..." % args.port)
+        run_auto(cfg, args, det, det_name, scene)
+        cam.release()
+        return
+
     ctl = FillController(cfg, cam, pump, detector=det)
 
     os.makedirs(SAVE_DIR, exist_ok=True)

@@ -16,6 +16,7 @@ Các nhóm bài:
   [5] session   - phiên tự động thật (camera giả lập): chỉ bật camera khi có cốc
   [6] firmware  - sketch ESP32 (esp32_cup_filler.ino + các .h) biên dịch được và
                   config.h khớp với cấu hình trên PC (preset, chân, cờ...)
+  [7] cli       - bảng điều khiển tools/esp_cli.py chạy đúng kịch bản (dùng ESP giả lập)
 """
 from __future__ import annotations
 
@@ -522,12 +523,45 @@ def test_firmware(use_cpp: bool = True) -> None:
               (proc.stderr or "")[:200])
 
 
+
+# ==========================================================================
+def test_cli() -> None:
+    """Chạy tools/esp_cli.py ở chế độ giả lập + tua nhanh đồng hồ."""
+    print("== [7] BẢNG ĐIỀU KHIỂN esp_cli.py ==")
+    import contextlib
+    import io
+
+    try:
+        import tools.esp_cli as cli_mod
+    except Exception as exc:                                  # pragma: no cover
+        check(False, "nạp được tools/esp_cli.py", str(exc))
+        return
+
+    real_sleep = cli_mod.time.sleep
+    cli_mod.time.sleep = lambda _s: None          # tua nhanh (mô phỏng đã tính theo tick)
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            code = cli_mod.main(["--port", "sim", "--demo", "--quiet"])
+    finally:
+        cli_mod.time.sleep = real_sleep
+    out = buf.getvalue()
+
+    check(code == 0, "esp_cli.py --demo chạy xong (exit 0)", "exit=%s" % code)
+    check("KẾT THÚC" in out or "HẾT KỊCH BẢN" in out, "in ra kết thúc kịch bản")
+    check(out.count("✘") == 0, "không bước nào quá thời gian chờ", str(out.count("✘")))
+    for needle in ("ESP báo CUP_PLACED", "ESP MỞ KHOÁ nút/mic", "ESP bắt đầu bơm", "rót xong"):
+        check(needle in out, "kịch bản có bước: %s" % needle)
+    check("200/200 ml" in out.replace(" ", "") or "200 ml" in out,
+          "rót đúng 200 ml trong kịch bản CLI")
+
+
 # ==========================================================================
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-cpp", action="store_true", help="bỏ bài kiểm tra biên dịch C++")
     ap.add_argument("--only", default=None,
-                    help="chỉ chạy một nhóm: protocol|cpp|voice|flow|session|firmware")
+                    help="chỉ chạy một nhóm: protocol|cpp|voice|flow|session|firmware|cli")
     args = ap.parse_args()
 
     groups = {
@@ -537,6 +571,7 @@ def main() -> int:
         "flow": test_flow,
         "session": test_session,
         "firmware": lambda: test_firmware(not args.no_cpp),
+        "cli": test_cli,
     }
     if args.only:
         groups = {args.only: groups[args.only]}

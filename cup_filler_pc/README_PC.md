@@ -121,3 +121,37 @@ Bản cập nhật thử DirectShow trước rồi mới fallback Media Foundati
 4. Rút/cắm lại webcam rồi khởi động lại chương trình.
 
 Nếu muốn giữ nguyên thư mục dữ liệu/ảnh đã chụp, giải nén bản cập nhật đè lên thư mục code hiện tại; không xóa `datasets/cups/user/images/` hoặc `datasets/cups/user/labels/`.
+
+---
+
+## 3) Dùng kèm bo ESP32 (nút bấm + cảm biến cốc + bơm)
+
+Bo ESP32 lo phần cứng (cảm biến cốc, 5 nút chọn mức, mic, relay bơm), máy tính lo nhận diện cốc.
+Hai bên nói chuyện qua cáp UART (USB-TTL). Chi tiết dây và cách nạp: **`firmware/README.md`**;
+đặc tả gói tin: **`docs/PROTOCOL.md`**.
+
+**Thử trước khi có phần cứng** — nhấp đúp **`esp_sim_windows.bat`**: chương trình dùng ESP32
+*giả lập* và chạy đúng kịch bản thật (đặt cốc → xác nhận → bấm nút → rót 200 ml).
+
+**Khi đã có bo ESP32:**
+
+1. Nạp firmware `firmware/esp32_cup_filler/esp32_cup_filler.ino` bằng Arduino IDE
+   (Board: **ESP32 Dev Module**), nhớ nối dây UART2 → mạch USB-TTL → cổng USB của máy tính.
+2. Nhấp đúp **`esp_test_windows.bat`** và nhập cổng COM (ví dụ `COM5`) để kiểm tra nhanh:
+   đặt cốc → bấm nút → bơm chạy → nhấc cốc → bơm dừng.
+3. Chạy cả hệ thống: **`run_esp_windows.bat`** (nhập cổng COM) hoặc
+   `.venv\Scripts\python.exe tools\run_pc.py --port COM5`.
+
+Từ đây camera **chỉ bật khi bạn đặt cốc vào khay**; nút bấm trên ESP32 chỉ hoạt động sau khi
+máy tính đã nhận diện xong cốc (đèn LED trên ESP32 sáng đều = đã mở khoá).
+
+Cần chỉnh thông số cho đúng máy của bạn (chân nút, relay, lưu lượng ml/s, ngưỡng mic…):
+mở `firmware/esp32_cup_filler/config.h`, sửa rồi nạp lại. Trên máy tính có thể hiệu chuẩn nhanh
+mà không cần nạp lại firmware:
+
+```bat
+.venv\Scripts\python.exe tools\esp_cli.py --port COM5
+esp> params 41.0 500 60      # lưu lượng 41 ml/s, trần 500 ml, timeout 60 giây
+esp> tare                    # đo lại mặt khay (nhấc cốc ra trước)
+esp> watch                   # xem mọi gói tin ESP gửi lên
+```
