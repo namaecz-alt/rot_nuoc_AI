@@ -44,6 +44,18 @@ from cupfiller.yolo_dataset import DATASET_DIR               # noqa: E402
 SAVE_DIR = os.path.join(DATASET_DIR, "user", "images")
 
 
+def next_save_index(save_dir: str) -> int:
+    """Chi so lon nhat dang co trong thu muc anh chup (de khong ghi de anh cu)."""
+    n = 0
+    for f in os.listdir(save_dir):
+        if f.startswith("pc_") and f.endswith(".png"):
+            try:
+                n = max(n, int(f[3:-4]))
+            except ValueError:
+                pass
+    return n
+
+
 def make_detector(cfg, args):
     # Với cốc trong suốt + backlight, detector cổ điển được kiểm chứng ổn định hơn
     # YOLO COCO tổng quát. Chỉ bật YOLO khi người dùng yêu cầu --yolo.
@@ -96,7 +108,7 @@ def main():
     show_boxes = True
     print("Detector :", det_name)
     print("Phim     : 1..5 muc rot | s mo phong | e dung | t chup anh | d an/hien hop YOLO (chi --yolo) | q thoat")
-    n_save = len(os.listdir(SAVE_DIR))
+    n_save = next_save_index(SAVE_DIR)
     while True:
         t0 = time.time()
         tel = ctl.tick(dt)

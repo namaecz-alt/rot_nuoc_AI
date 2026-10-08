@@ -62,6 +62,8 @@ class FillController:
         self.topup_max = int(loop.get("topup_max_pulses", 5))
         self.max_over_mm = float(loop.get("max_overfill_mm", 4.0))
         self.timeout_s = float(loop.get("timeout_s", 45))
+        self.check_cup_timeout_s = float(loop.get("check_cup_timeout_s", 30.0))
+        self.fine_blind_s = float(loop.get("fine_blind_s", 3.0))
         self.safe = cfg.get("safety", {})
         self.max_vol = float(self.safe.get("max_volume_ml", 450))
         self.stable_n = int(self.safe.get("cup_stable_frames", 4))
@@ -85,6 +87,8 @@ class FillController:
         self._stable = 0
         self._no_cup_t = 0.0
         self._pulses = 0
+        self._topup_t = 0.0     # phai co gia tri truoc khi State.TOPUP doc den
+        self._blind_t = 0.0     # thoi gian mat vach nuoc lien tuc (pha FINE)
         self._prev_box = None
         self._history: list = []
         self.final_report: dict = {}
@@ -113,11 +117,18 @@ class FillController:
         self._t_state = 0.0
         self._stable = 0
         self._pulses = 0
+        self._topup_t = 0.0
+        self._blind_t = 0.0
+        self._no_cup_t = 0.0     # khong reset -> lan rot sau co the FAULT oan
+        self._prev_box = None
         self.elapsed = 0.0
+        self.volume_ml = 0.0
+        self.h_mm = 0.0
         self._vcmd = 0.0
         self._flow_est = 0.0
         self._samples = []
         self._fit = None
+        self._history = []       # moi lan rot giu mot duong cong rieng
         self.tracker.reset()
         self.final_report = {}
 
@@ -227,7 +238,7 @@ class FillController:
         if not det.found:
             self._stable = 0
             self.alert = "CHO DAT COC: chưa thấy cốc trong vùng nhìn"
-            if self._t_state > 30:
+            if self._t_state > self.check_cup_timeout_s:
                 self.state = State.IDLE
                 self._t_state = 0.0
             return
@@ -270,6 +281,17 @@ class FillController:
 
     def _state_fine(self) -> None:
         self._refit_target(rate_limit=0.5)
+        # Mat vach nuoc keo dai (bot day / nguoc sang): neu da bom du the tich thi
+        # coi nhu dat va chuyen sang lang, khong de treo den khi het timeout.
+        if self.last_det is not None and not self.last_det.waterline_found:
+            self._blind_t += 1.0 / self.fps
+            if self._blind_t > self.fine_blind_s and self._vcmd >= self.target_ml - self.in_flight_ml:
+                self.alert = "MAT_VACH_NUOC: bom du the tich, chuyen sang cho lang"
+                self.pump.off()
+                self._goto(State.SETTLING)
+                return
+        else:
+            self._blind_t = 0.0
         if self.h_mm > self.g_h - 3.0:
             self.alert = "CUP_FULL: cốc đã gần đầy"
             self.pump.off()

@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# sản phẩm biên dịch của firmware (tạo lại bằng: make -C cup_filler_pc/firmware/esp32)
+cup_filler_pc/firmware/esp32/sim
+cup_filler_pc/firmware/esp32/test_firmware
+cup_filler_pc/firmware/esp32/.pio/

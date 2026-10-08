@@ -131,7 +131,19 @@ DEFAULTS: Dict[str, Any] = {
             "topup_max_pulses": 5,
             "max_overfill_mm": 5.0,
             "timeout_s": 45,
+            "check_cup_timeout_s": 30.0,
+            "fine_blind_s": 3.0,
         },
+    },
+    # ---- ESP32 (cam bien coc + nut bam + mic + relay bom) qua UART ----
+    "esp32": {
+        "port": "COM5",           # Windows: COM5 | Linux: /dev/ttyUSB0 | macOS: /dev/cu.usbserial-*
+        "baud": 115200,
+        "confirm_frames": 3,      # so khung hinh thay coc lien tiep moi gui ACK,1
+        "confirm_timeout_s": 5.0, # qua han -> bao ACK,0 (ESP32 khong cho bom)
+        "keep_camera_open": True, # giu camera mo luc doi nut/mic (mo lai mat 1-3 s)
+        "idle_release_s": 1.0,    # khong co coc bao lau thi tat camera
+        "hb_period_s": 0.25,      # nhip gui ESP32 (watchdog ben do la 0.8 s)
     },
     "safety": {
         "max_volume_ml": 450,

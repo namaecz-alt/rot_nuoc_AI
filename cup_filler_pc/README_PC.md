@@ -92,15 +92,42 @@ Có GPU NVIDIA CUDA? Thay `--device cpu` bằng `--device 0`. Nếu PC ít RAM, 
 
 `1..5` chọn preset 100/150/200/250/300 ml; `s` chạy FSM mô phỏng; `e` dừng; `t` chụp ảnh; `q` thoát. `--yolo` bật YOLO làm bộ tìm cốc; mặc định là detector OpenCV cho cốc trong có backlight. Chương trình trên PC chỉ **mô phỏng lệnh bơm**, không có phần cứng bơm; tuyệt đối không đấu bơm trực tiếp vào máy tính. Khi lắp phần cứng Raspberry Pi, hiệu chuẩn lại scale mm/px và lưu lượng bơm trước khi rót thật.
 
-## 7) Cấu trúc file cần giữ
+## 7) Chạy cùng ESP32 (cảm biến cốc + nút bấm + mic + relay bơm)
+
+Khi có mạch ESP32 (firmware trong `firmware/esp32/`), máy tính **không tự bật
+camera** nữa: nó chờ ESP32 báo có cốc qua UART rồi mới bật camera, nhận diện,
+báo `ACK,1` xuống; lúc đó ESP32 mới cho phép bấm nút chọn mức hoặc nói bằng mic.
+
+```bat
+pip install pyserial
+:: nạp firmware cho ESP32 trước (Arduino IDE hoặc: cd firmware\esp32 && pio run -t upload)
+.venv\Scripts\python.exe tools\run_esp.py --port COM5 --camera 0
+```
+
+Chưa có mạch? Chạy thử toàn bộ luật điều khiển bằng "ESP32 ảo":
+
+```bat
+.venv\Scripts\python.exe tools\run_esp.py --sim --synthetic --auto-test
+.venv\Scripts\python.exe tools\test_esp.py
+```
+
+`tools\run_esp.py --port COM5 --monitor` chỉ in khung tin UART — rất tiện khi
+gò lỗi nối dây. Trong chế độ `--sim` có thể gõ `!CUP 1`, `!BTN 3`, `!VOICE 5`
+để giả lập cảm biến/nút/mic. Chi tiết giao thức và sơ đồ nối:
+[`firmware/esp32/README_ESP32.md`](firmware/esp32/README_ESP32.md).
+
+## 8) Cấu trúc file cần giữ
 
 ```text
 cup_filler/
 ├── weights/yolo11n_coco.pt        # model COCO có sẵn lớp cup, chạy ngay
 ├── weights/cup_yolo.pt            # xuất hiện sau khi bạn train model riêng
 ├── cupfiller/                     # mã detector/controller/camera/pump
+├── firmware/esp32/                # firmware ESP32 + unit test (make test / make sim)
 ├── tools/detect_pc.py             # nhận diện webcam/ảnh/video
 ├── tools/run_pc.py                # UI demo + dry-run
+├── tools/run_esp.py               # chạy với ESP32 thật (--port COM5) hoặc --sim
+├── tools/test_esp.py              # kiểm chứng PC <-> ESP32
 ├── tools/label_cups.py            # gán nhãn thủ công
 ├── tools/autolabel.py             # nhãn nháp tự động
 ├── tools/train_yolo.py            # train riêng

@@ -80,6 +80,22 @@ control:
     topup_max_pulses: 5
     max_overfill_mm: 5.0     # vượt đích quá số này -> báo lỗi OVERFILL
     timeout_s: 45            # an toàn: quá thời gian này -> ngắt bơm
+    check_cup_timeout_s: 30  # chờ đặt cốc quá lâu -> về IDLE
+    fine_blind_s: 3.0        # mất vạch nước quá lâu ở pha FINE -> chuyển sang lắng
+
+# =====================================================================
+#  ESP32: cảm biến cốc + nút bấm + mic + relay bơm, nối máy tính bằng UART
+#  Firmware: firmware/esp32/  (nút bấm tích cực THAP + INPUT_PULLUP,
+#  relay bơm tích cực CAO). Máy tính chỉ bật camera SAU khi ESP32 báo có cốc.
+# =====================================================================
+esp32:
+  port: "COM5"               # Windows: COM5 | Linux: /dev/ttyUSB0 | macOS: /dev/cu.usbserial-*
+  baud: 115200               # 8N1
+  confirm_frames: 3          # thấy cốc 3 khung liên tiếp mới báo ACK,1 xuống ESP32
+  confirm_timeout_s: 5.0     # quá hạn -> ACK,0 (ESP32 báo NO_CUP_VISION, không cho bơm)
+  keep_camera_open: true     # giữ camera mở lúc chờ bấm nút (mở lại mất 1-3 s)
+  idle_release_s: 1.0        # không có cốc 1 s -> tắt camera cho đỡ tốn CPU
+  hb_period_s: 0.25          # nhịp sống gửi ESP32 (watchdog bên đó 0.8 s)
 
 safety:
   max_volume_ml: 450         # tuyệt đối không rót quá

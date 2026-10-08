@@ -11,7 +11,7 @@ from typing import Optional
 
 import numpy as np
 
-__all__ = ["Pump", "GpioPump", "SimPump", "ManualPump", "open_pump"]
+__all__ = ["Pump", "GpioPump", "SimPump", "ManualPump", "UartRelayPump", "open_pump"]
 
 
 class Pump:
@@ -27,7 +27,7 @@ class Pump:
         self.min_pwm = float(pc.get("min_pwm", 0.30))
         self.max_pwm = float(pc.get("max_pwm", 1.0))
         self.pwm = 0.0
-        self._t_on = 0.0
+        self._off_sent = False
 
     # ---- API ----------------------------------------------------------
     def flow_at(self, pwm: float) -> float:
@@ -43,19 +43,29 @@ class Pump:
 
     def set_pwm(self, p: float) -> None:
         p = float(np.clip(p, 0.0, self.max_pwm))
-        if p > 0 and p < self.min_pwm:
-            p = self.min_pwm
+        if 0 < p < self.min_pwm:
+            p = self.min_pwm          # dưới ngưỡng này bơm không thắng được áp cột nước
+        if abs(p - self.pwm) < 1e-6 and self._off_sent is False:
+            return                    # không gửi lại lệnh trùng (rất quan trọng với UART)
         self.pwm = p
+        self._off_sent = False
         self._hw_set(p)
-        if p > 0:
-            self._t_on += 0.0
 
     def off(self) -> None:
+        # Đảm bảo đúng MỘT lệnh tắt cho mỗi lần chuyển on -> off: gọi off() liên
+        # tiếp (controller gọi mỗi khung hình) sẽ không làm bẩn UART/GPIO.
+        if self.pwm == 0.0 and self._off_sent:
+            return
         self.pwm = 0.0
+        self._off_sent = True
         self._hw_set(0.0)
 
     def _hw_set(self, p: float) -> None:  # pragma: no cover
         raise NotImplementedError
+
+    def close(self) -> None:
+        """Tra ve tai nguyen (GPIO/UART). Lop con nao can thi ghi de."""
+        self.off()
 
     # ---- tiện ích an toàn ---------------------------------------------
     def pulse(self, ml: float, fps: float = 50.0) -> float:
@@ -90,6 +100,7 @@ class GpioPump(Pump):
         self._pwm.ChangeDutyCycle(duty)
 
     def close(self) -> None:
+        self.off()
         self._pwm.stop()
         self.GPIO.cleanup(self.pin)
 
@@ -115,6 +126,34 @@ class SimPump(Pump):
         return self._flow
 
 
+class UartRelayPump(Pump):
+    """Bom NAM TREN ESP32: may tinh chi gui muc cong suat 0..100% qua UART.
+
+    ESP32 tu bam mem (soft-PWM) ra RELAY tich cuc CAO. May tinh khong giu chan
+    GPIO nao va luon gui lenh cuoi cung la 0% khi dung.
+    """
+
+    def __init__(self, cfg, channel):
+        super().__init__(cfg)
+        self.ch = channel
+        self._last_duty: Optional[int] = None
+
+    def _hw_set(self, p: float) -> None:
+        duty = int(round(float(np.clip(p, 0.0, 1.0)) * 100.0))
+        if duty == self._last_duty:
+            return                    # tranh lam ban UART (15 lenh/giay la du)
+        self._last_duty = duty
+        self.ch.send("PUMP", duty)
+
+    @property
+    def last_duty(self) -> Optional[int]:
+        return self._last_duty
+
+    def close(self) -> None:
+        self._hw_set(0.0)
+        self.pwm = 0.0
+
+
 class ManualPump(Pump):
     """Không phần cứng: chỉ log, dùng để dry-run thuật toán trên video/ảnh."""
 
@@ -126,10 +165,18 @@ class ManualPump(Pump):
         self.log.append((time.time(), p))
 
 
-def open_pump(cfg, syn_cam=None) -> Pump:
+def open_pump(cfg, syn_cam=None, channel=None) -> Pump:
+    """Mo doi tuong bom theo ``control.pump.type``.
+
+    ``uart`` can them ``channel`` (EspChannel) - bom duoc dieu khien tu ESP32.
+    """
     kind = cfg.get("control.pump.type", "sim")
     if kind == "gpio":
         return GpioPump(cfg)
+    if kind == "uart":
+        if channel is None:
+            raise ValueError("control.pump.type = 'uart' can truyen channel (EspChannel)")
+        return UartRelayPump(cfg, channel)
     if kind == "manual":
         return ManualPump(cfg)
     p = SimPump(cfg)

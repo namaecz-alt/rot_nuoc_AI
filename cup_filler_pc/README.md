@@ -5,10 +5,49 @@ sau đó rót nước tới **mức thể tích chọn trước** (100 / 150 / 2
 Chạy trên **Raspberry Pi 4 + Camera Module / webcam USB**, hoặc chạy giả lập trên máy tính để thử thuật toán.
 
 ```
-Đặt cốc → camera thấy cốc qua đèn nền → đo hình dạng cốc
+Đặt cốc → cảm biến báo ESP32 → ESP32 gửi UART → máy tính mới BẬT camera
+       → camera thấy cốc qua đèn nền → đo hình dạng cốc → báo ACK xuống ESP32
+       → ESP32 cho phép bấm nút chọn mức / nói bằng mic
        → bơm thô theo tích phân lưu lượng → học ánh xạ ml→mm của CHÍNH cốc đó
        → vòng kín tinh chỉnh theo vạch nước → lắng → bù xung nhỏ → XONG
 ```
+
+## ESP32 + máy tính: ai làm gì
+
+Phần cứng điều khiển nằm trên **ESP32**, còn thị giác máy tính chạy trên
+**máy tính**. Hai bên nói chuyện bằng **UART 115200** (3 dây: TX, RX, GND).
+
+```
+  CẢM BIẾN CÓC ─►┐                     ┌─► CAMERA (chỉ bật khi có cốc)
+  NÚT MỨC 1..5  ─►│      ESP32         │
+  NÚT DỪNG      ─►│  ◄══ UART 115200 ══►  MÁY TÍNH (nhận diện + FSM rót)
+  MIC / giọng nói►│                     │
+  RELAY BƠM ◄───┘  (tích cực CAO)     └─► lệnh PUMP 0..100% xuống relay
+```
+
+Trình tự **bắt buộc**, không bước nào được đi tắt:
+
+| Bước | Ai | Việc |
+|---|---|---|
+| 1 | ESP32 | Cảm biến thấy cốc (lọc rung 150 ms) → gửi `$CUP,1` |
+| 2 | Máy tính | Nhận được tin đó **mới bật camera** và chạy nhận diện |
+| 3 | Máy tính | Thấy đúng cốc → `$ACK,1`; không thấy → `$ACK,0` |
+| 4 | ESP32 | Chỉ khi nhận `ACK,1` mới sang **ARMED**: cho phép nút bấm / mic |
+| 5 | ESP32 | Người dùng bấm nút mức (hoặc nói) → `$START,<ml>` |
+| 6 | Máy tính | Chạy FSM rót, gửi `$PUMP,<duty>` xuống; ESP32 băm mềm ra relay |
+| 7 | Cả hai | Xong → `$STATE,DONE`. Nhả cốc / mất liên lạc → **cắt bơm cả hai phía** |
+
+Quy ước điện đã chốt: **nút bấm và cảm biến tích cực mức THẤP, đặt
+`INPUT_PULLUP`** (một đầu nút nối GND, không cần trở ngoài); **relay bơm tích
+cực mức CAO** và được ghi 0 ngay khi khởi động.
+
+Chốt an toàn: chưa có `ACK,1` thì mọi yêu cầu rót bị từ chối; máy tính im lặng
+quá 800 ms thì ESP32 tự cắt relay; nhả cốc giữa chừng thì cắt relay trước, báo
+tin sau. Toàn bộ có kiểm tra đơn vị.
+
+* Firmware, sơ đồ nối, bảng giao thức: [`firmware/esp32/README_ESP32.md`](firmware/esp32/README_ESP32.md)
+* Chạy thử không cần phần cứng: `make -C firmware/esp32 test` (88 kiểm tra),
+  `python tools/test_esp.py`, `python tools/run_esp.py --sim --synthetic --auto-test`
 
 ## Kết quả tự kiểm chứng (không cần phần cứng, xem `report/`)
 
@@ -84,7 +123,11 @@ python tools/run_pc.py --synthetic
 cup_filler/
 ├── cupfiller/                 # thư viện lõi (detection/controller/camera/pump/webapp)
 │   ├── detection_yolo.py      # YOLO tìm cốc + CV đo vạch nước
-│   └── yolo_dataset.py        # sinh dataset có nhãn tổng hợp
+│   ├── yolo_dataset.py        # sinh dataset có nhãn tổng hợp
+│   ├── serial_link.py         # giao thức UART với ESP32 (bản Python)
+│   ├── host_app.py            # điều phối phía PC: chờ CUP,1 -> bật camera -> ACK -> rót
+│   └── esp_sim.py             # "ESP32 ảo" bằng Python (chạy thử không cần nạp)
+├── firmware/esp32/            # FIRMWARE ESP32 (Arduino/PlatformIO) + unit test C++
 ├── weights/yolo11n_coco.pt    # pretrained COCO (cup), chạy ngay
 ├── weights/cup_yolo.pt        # model của bạn sau khi train
 ├── tools/

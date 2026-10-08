@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+config/settings.yaml
+config/calibration.json
+logs/
