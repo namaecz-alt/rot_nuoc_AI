@@ -69,8 +69,10 @@ struct StubState {
   int analog = 2048;                     // giá trị ADC mặc định (im lặng)
   float distance_mm = 150.0f;            // khoảng cách tới HC-SR04 (150 = khay trống)
   bool echo_ok = true;                   // false = không có tín hiệu dội về
-  std::string tx;                        // bytes firmware đã gửi ra UART2
-  std::string rx;                        // bytes PC gửi xuống, firmware sẽ đọc dần
+  std::string tx;                        // bytes firmware đã gửi ra UART2 (kênh mặc định)
+  std::string rx;                        // bytes PC gửi xuống UART2, firmware sẽ đọc dần
+  std::string usb_tx;                    // bytes gửi ra CỔNG USB của board (UART_USE_USB_SERIAL)
+  std::string usb_rx;                    // bytes PC gửi xuống qua cổng USB
   StubMic mic;
   int relay_toggles = 0;
   // thống kê
@@ -138,6 +140,14 @@ inline std::string stub_uart_take() {
   out.swap(stubState().tx);
   return out;
 }
+inline void stub_uart_inject_usb(const std::string &s) {
+  stubState().usb_rx.append(s);
+}
+inline std::string stub_usb_take() {
+  std::string out;
+  out.swap(stubState().usb_tx);
+  return out;
+}
 
 // ===========================================================================
 //  API KIỂU ARDUINO
@@ -186,14 +196,44 @@ inline uint32_t pulseIn(int pin, int state, uint32_t timeout = 1000000UL) {
 }
 
 // ---- Serial giả (để sketch gọi print/println thoải mái) --------------------
-class StubSerial {
+// ---- UART nối PC: ghi ra được thu lại, đọc vào lấy từ đệm PC gửi xuống ----
+// Cổng UART giả: giống core ESP32, mỗi cổng có đệm RX/TX RIÊNG.
+//   uart_num = 0 -> cổng USB của board (Serial)      -> đệm usb_*
+//   uart_num = 2 -> UART2 trên GPIO16/17 (Serial2)   -> đệm tx/rx (kênh mặc định)
+class HardwareSerial {
  public:
-  void begin(unsigned long) {}
-  int available() { return 0; }
+  explicit HardwareSerial(int uart_num = 2) : _usb(uart_num == 0) {}
+  void begin(unsigned long, uint32_t = 0, int = -1, int = -1) {}
+  void setRxBufferSize(size_t) {}
+  void setTxBufferSize(size_t) {}
+  int available() { return (int)_rx().size(); }
   int availableForWrite() { return 256; }
-  int read() { return -1; }
-  size_t write(const uint8_t *, size_t n) { return n; }
-  size_t write(uint8_t) { return 1; }
+  int read() {
+    std::string &rx = _rx();
+    if (rx.empty()) return -1;
+    int b = (unsigned char)rx[0];
+    rx.erase(0, 1);
+    return b;
+  }
+  size_t write(const uint8_t *p, size_t n) {
+    if (p && n) _tx().append((const char *)p, n);
+    return n;
+  }
+  size_t write(uint8_t b) { _tx().push_back((char)b); return 1; }
+  void flush() {}
+  // Cổng USB bỏ qua log khi firmware chỉ in DEBUG_SERIAL (không phải kênh PC)
+  bool isUsb() const { return _usb; }
+
+ private:
+  std::string &_rx() { return _usb ? stubState().usb_rx : stubState().rx; }
+  std::string &_tx() { return _usb ? stubState().usb_tx : stubState().tx; }
+  bool _usb;
+};
+
+// Log của firmware (Serial.print) đi vào đệm riêng để không lẫn vào gói tin
+class StubSerial : public HardwareSerial {
+ public:
+  StubSerial() : HardwareSerial(0) {}
   template <class T> void print(T) {}
   template <class T> void print(T, int) {}
   void print(const char *) {}
@@ -202,27 +242,6 @@ class StubSerial {
   template <class T> void println(T, int) {}
   void println() {}
   void println(const char *) {}
-  void flush() {}
-};
-
-// ---- UART nối PC: ghi ra được thu lại, đọc vào lấy từ đệm PC gửi xuống ----
-class HardwareSerial {
- public:
-  void begin(unsigned long, uint32_t = 0, int = -1, int = -1) {}
-  void setRxBufferSize(size_t) {}
-  void setTxBufferSize(size_t) {}
-  int available() { return (int)stubState().rx.size(); }
-  int availableForWrite() { return 256; }
-  int read() {
-    StubState &s = stubState();
-    if (s.rx.empty()) return -1;
-    int b = (unsigned char)s.rx[0];
-    s.rx.erase(0, 1);
-    return b;
-  }
-  size_t write(const uint8_t *p, size_t n) { stub_uart_tx(p, n); return n; }
-  size_t write(uint8_t b) { stub_uart_tx(&b, 1); return 1; }
-  void flush() {}
 };
 
 extern StubSerial Serial;

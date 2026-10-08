@@ -171,7 +171,7 @@ bằng `--port sim` (bấm "Đặt cốc" ngay trên web).
 .venv\Scripts\python.exe tools\test_comms.py
 ```
 
-Kết quả mong đợi: `151/151 bài đạt` — kiểm tra khung gói + CRC, đối chiếu firmware C++ với
+Kết quả mong đợi: `157/157 bài đạt` — kiểm tra khung gói + CRC, đối chiếu firmware C++ với
 Python từng byte, đọc số tiếng Việt, luồng đặt cốc → CUP_OK → bấm nút → rót, giao diện web,
 cả chương trình `run_pc.py` thật và cả **firmware được chạy thật trên PC** (nhóm `fwrun`:
 nút còn khoá thì bấm không ăn, relay tích cực mức CAO, rót đúng ml, nhấc cốc/mất liên lạc/

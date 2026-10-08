@@ -31,9 +31,14 @@
 #include "voice_mic.h"
 
 // ---------------------------------------------------------------------------
-//  Cổng UART nối máy tính (UART2) + cổng USB để xem log
+//  Cổng nối máy tính: UART2 (GPIO16/17, cần mạch USB-TTL) hoặc luôn cổng USB của
+//  board (UART_USE_USB_SERIAL 1 -> không cần thêm linh kiện nào). Xem config.h.
 // ---------------------------------------------------------------------------
-HardwareSerial &PC = Serial2;
+#if UART_USE_USB_SERIAL
+HardwareSerial &PC = Serial;          // nói chuyện với PC qua cáp USB của board
+#else
+HardwareSerial &PC = Serial2;         // qua mạch USB-TTL ở GPIO16/17
+#endif
 
 static proto::Decoder g_dec;
 static proto::Frame g_frame;
@@ -83,6 +88,17 @@ static uint8_t nextSeq() {
 
 static void sendRaw(size_t len) {
   if (len) PC.write(g_tx, len);
+}
+
+// Chép chuỗi có giới hạn vào đệm, LUÔN kết thúc bằng '\0' (thay strncpy để không
+// bị cảnh báo "output may be truncated" và không bao giờ thiếu ký tự kết thúc).
+static void copyText(char *dst, size_t cap, const char *src) {
+  if (dst == NULL || cap == 0) return;
+  size_t i = 0;
+  if (src != NULL) {
+    for (; i + 1 < cap && src[i] != '\0'; i++) dst[i] = src[i];
+  }
+  dst[i] = '\0';
 }
 
 static void logMsg(const char *text) {
@@ -352,7 +368,7 @@ static void handleFrame(const proto::Frame &f) {
       g_pcConfirmed = false;
       g_hasCupOk = false;
       if (g_cup.present()) g_state = proto::ST_WAIT_PC;
-      strncpy(g_lastError, rj.text, sizeof(g_lastError) - 1);
+      copyText(g_lastError, sizeof(g_lastError), rj.text);
       logMsg("PC chua nhan dien duoc coc - hay dat lai coc");
       sendStatus();
       break;
@@ -419,7 +435,8 @@ static void handleFrame(const proto::Frame &f) {
       switch (ca.cmd) {
         case proto::CMD_TARE: {
           if (g_cup.present()) logMsg("CANH BAO: dang co coc - hay nhac coc ra truoc khi tare");
-          float b = g_cup.tare(g_now);
+          float b = g_cup.tare(g_now);       // đo lại mặt khay (khay phải TRỐNG)
+          (void)b;                           // chỉ in ra khi DEBUG_SERIAL
 #if DEBUG_SERIAL
           Serial.print("Tare xong: mat khay ");
           Serial.print(b, 1);
@@ -534,8 +551,7 @@ static void pollSensorFault() {
   }
   if (g_cup.badStreak() < CUP_FAULT_SAMPLES || g_sensorFault) return;
   g_sensorFault = true;
-  strncpy(g_lastError, "LOI_CAM_BIEN_SIEU_AM", sizeof(g_lastError) - 1);
-  g_lastError[sizeof(g_lastError) - 1] = 0;
+  copyText(g_lastError, sizeof(g_lastError), "LOI_CAM_BIEN_SIEU_AM");
   logMsg("LOI CAM BIEN SIEU AM - kiem tra day HC-SR04");
   if (g_state == proto::ST_POURING) endPour(proto::STOP_SENSOR_FAULT);
   g_state = proto::ST_FAULT;
@@ -597,7 +613,11 @@ void setup() {
 #endif
   PC.setRxBufferSize(2048);
   PC.setTxBufferSize(2048);
+#if UART_USE_USB_SERIAL
+  PC.begin(UART_BAUD);                // cổng USB của board (đã có sẵn chân qua chip USB-UART)
+#else
   PC.begin(UART_BAUD, SERIAL_8N1, PIN_UART_RX, PIN_UART_TX);
+#endif
 
   pinMode(PIN_LED, OUTPUT);
   digitalWrite(PIN_LED, LOW);
@@ -696,7 +716,7 @@ void loop() {
     if ((now - g_tLastCupRetry) >= CUP_RETRY_MS) sendCupPlaced(0x02);   // nhắc lại
     if (g_tWaitPc && (now - g_tWaitPc) >= WAIT_PC_TIMEOUT_MS) {
       g_tWaitPc = 0;
-      strncpy(g_lastError, "PC_khong_tra_loi_CUP_OK", sizeof(g_lastError) - 1);
+      copyText(g_lastError, sizeof(g_lastError), "PC_khong_tra_loi_CUP_OK");
       sendError(1, "PC_khong_tra_loi_CUP_OK");
       logMsg("PC khong tra loi CUP_OK");
 #if ALLOW_MANUAL_WHEN_LINK_LOST

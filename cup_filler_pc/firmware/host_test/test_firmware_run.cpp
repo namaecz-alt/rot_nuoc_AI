@@ -65,6 +65,16 @@ static std::string hex(const std::string &s) {
   return out;
 }
 
+// ---- kênh nói chuyện với PC: UART2 (GPIO16/17) hoặc cổng USB của board -------
+// Nhờ vậy bộ test chạy được cho CẢ HAI cách đấu dây trong config.h.
+#if UART_USE_USB_SERIAL
+static std::string pc_take() { return stub_usb_take(); }
+static void pc_inject(const std::string &s) { stub_uart_inject_usb(s); }
+#else
+static std::string pc_take() { return stub_uart_take(); }
+static void pc_inject(const std::string &s) { stub_uart_inject(s); }
+#endif
+
 static std::string pc_ping();
 
 // ---- vòng chạy: để đồng hồ ảo trôi rồi gọi loop() như firmware thật --------
@@ -78,7 +88,7 @@ static void keepalive_tick() {
   if (!g_keepalive) return;
   if ((millis() - g_t_last_ping) >= 1000) {
     g_t_last_ping = millis();
-    stub_uart_inject(pc_ping());          // không in ra để log gọn
+    pc_inject(pc_ping());                 // không in ra để log gọn
   }
 }
 
@@ -95,14 +105,14 @@ static void run_ms(uint32_t ms) {
 }
 
 static void dump_tx() {
-  std::string out = stub_uart_take();
+  std::string out = pc_take();
   if (!out.empty()) printf("TX %s\n", hex(out).c_str());
   fflush(stdout);
 }
 
 // In TX ra (như dump_tx) rồi đếm số khung hợp lệ -> phát hiện gửi trùng/lũ gói
 static int dump_tx_count() {
-  std::string out = stub_uart_take();
+  std::string out = pc_take();
   if (!out.empty()) printf("TX %s\n", hex(out).c_str());
   fflush(stdout);
   proto::Decoder dec;
@@ -119,7 +129,7 @@ static int dump_tx_count() {
 
 static void send_pc(const std::string &frame) {
   printf("PC %s\n", hex(frame).c_str());
-  stub_uart_inject(frame);
+  pc_inject(frame);
   fflush(stdout);
 }
 

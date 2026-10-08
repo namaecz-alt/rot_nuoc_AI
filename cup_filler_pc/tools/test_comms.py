@@ -505,6 +505,39 @@ def test_firmware(use_cpp: bool = True) -> None:
           "N_BUTTONS=%s pins=%d" % (define_us("N_BUTTONS"), len(pins)))
     check(len(set(pins)) == len(pins), "các chân nút không trùng nhau", str(pins))
     check(all(0 <= p <= 39 for p in pins), "chân nút nằm trong dải GPIO hợp lệ", str(pins))
+
+    # ---- an toàn chân cho board ESP32 DevKit V1 (ESP32-WROOM-32) ----
+    def pin_of(name):
+        m = re.search(r"^\s*#define\s+%s\s+(\d+)" % name, text, re.M)
+        return int(m.group(1)) if m else None
+
+    named = {
+        "UART2 RX": pin_of("PIN_UART_RX"), "UART2 TX": pin_of("PIN_UART_TX"),
+        "HC-SR04 TRIG": pin_of("PIN_TRIG"), "HC-SR04 ECHO": pin_of("PIN_ECHO"),
+        "relay bơm": pin_of("PIN_RELAY"), "LED": pin_of("PIN_LED"),
+        "mic ADC": pin_of("PIN_MIC_ADC"), "I2S SCK": pin_of("PIN_I2S_SCK"),
+        "I2S WS": pin_of("PIN_I2S_WS"), "I2S SD": pin_of("PIN_I2S_SD"),
+        "cảm biến cốc (digital)": pin_of("PIN_CUP_DIGITAL"),
+    }
+    for i, p in enumerate(pins):
+        named["nút %d ml" % presets[i]] = p
+    flash = {k: v for k, v in named.items() if v is not None and 6 <= v <= 11}
+    check(not flash, "không dùng GPIO 6..11 (chân nối flash trong của ESP32)", str(flash))
+    only_read = {k: v for k, v in named.items()
+                 if v is not None and 34 <= v <= 39 and not k.startswith("mic ")
+                 and "cảm biến cốc" not in k}
+    check(not only_read,
+          "chỉ GPIO 34..39 cho việc CHỈ ĐỌC; nút/relay/LED không dùng chân này", str(only_read))
+    used = {}
+    for k, v in named.items():
+        if v is not None:
+            used.setdefault(v, []).append(k)
+    dup = {v: k for v, k in used.items() if len(k) > 1}
+    check(not dup, "mỗi chân chỉ dùng cho MỘT chức năng (không trùng chân)", str(dup))
+    adc = pin_of("PIN_MIC_ADC")
+    check(adc is not None and 32 <= adc <= 39,
+          "mic analog dùng ADC1 (GPIO 32..39) để đọc được cả khi bật WiFi",
+          "PIN_MIC_ADC=%s" % adc)
     check(define_us("RELAY_ACTIVE_HIGH") == "1", "relay TÍCH CỰC MỨC CAO (yêu cầu thiết kế)")
     check("INPUT_PULLUP" in open(os.path.join(ROOT, "firmware", "esp32_cup_filler",
                                               "buttons.h"), encoding="utf-8").read(),
@@ -676,23 +709,34 @@ def test_fwrun() -> None:
     inc_fw = os.path.join(ROOT, "firmware", "esp32_cup_filler")
     inc_host = os.path.join(ROOT, "firmware", "host_test")
     inc_stub = os.path.join(ROOT, "firmware", "host_test", "arduino_stub")
-    exe = os.path.join(tempfile.gettempdir(), "cupfiller_fwrun")
-    with tempfile.TemporaryDirectory() as tmp:
-        exe = os.path.join(tmp, "fwrun")
-        proc = subprocess.run([gxx, "-std=c++11", "-O2", "-I", inc_fw, "-I", inc_host,
-                               "-I", inc_stub, "-o", exe, src, stub, "-lm"],
-                              capture_output=True, text=True, timeout=300)
-        if proc.returncode != 0:
-            check(False, "biên dịch test_firmware_run.cpp (dựng firmware thật)",
-                  (proc.stderr or "").strip().splitlines()[-1] if proc.stderr else "")
-            return
-        check(True, "biên dịch được firmware + máy ảo mini trên máy tính")
-        try:
-            run = subprocess.run([exe], capture_output=True, text=True, timeout=600)
-        except subprocess.TimeoutExpired:
-            check(False, "chạy kịch bản firmware kết thúc trong 600 s")
-            return
-    out = run.stdout or ""
+
+    def build_and_run(flags, label):
+        """Biên dịch + chạy bộ test firmware với một cấu hình chân/kênh cho trước."""
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = os.path.join(tmp, "fwrun")
+            proc = subprocess.run([gxx, "-std=c++11", "-O2", "-Wall"] + flags +
+                                  ["-I", inc_fw, "-I", inc_host, "-I", inc_stub,
+                                   "-o", exe, src, stub, "-lm"],
+                                  capture_output=True, text=True, timeout=300)
+            warn = [l for l in (proc.stderr or "").splitlines() if "warning:" in l]
+            if proc.returncode != 0:
+                check(False, "biên dịch test_firmware_run.cpp (%s)" % label,
+                      (proc.stderr or "").strip().splitlines()[-1] if proc.stderr else "")
+                return None, ""
+            if warn:
+                check(False, "biên dịch %s không có cảnh báo" % label, warn[0][:160])
+            try:
+                run = subprocess.run([exe], capture_output=True, text=True, timeout=600)
+            except subprocess.TimeoutExpired:
+                check(False, "chạy kịch bản firmware (%s) kết thúc trong 600 s" % label)
+                return None, ""
+        return run, (run.stdout or "")
+
+    run, out = build_and_run([], "kênh UART2 trên GPIO16/17 (mặc định)")
+    if run is None or not out:
+        check(False, "chạy được kịch bản firmware trên máy tính")
+        return
+    check(True, "biên dịch + chạy được firmware thật + máy ảo mini (không cảnh báo)")
     lines = out.splitlines()
 
     # ---- các bài kiểm tra bên trong firmware (C++) ----
@@ -827,6 +871,25 @@ def test_fwrun() -> None:
           "mất cảm biến siêu âm -> FILL_DONE mã 'lỗi cảm biến'")
     check(any(d["reason"] == int(P.StopReason.SENSOR_FAULT) for d in cr),
           "CUP_REMOVED do tuột dây cảm biến ghi đúng mã 'lỗi cảm biến' (không phải 'nhấc cốc')")
+
+    # ---- chạy lại TOÀN BỘ kịch bản với cấu hình "nói chuyện qua cổng USB của board"
+    # (UART_USE_USB_SERIAL=1): người dùng ESP32 DevKit V1 không cần mạch USB-TTL vẫn dùng được.
+    run_usb, out_usb = build_and_run(["-DUART_USE_USB_SERIAL=1", "-DDEBUG_SERIAL=0"],
+                                     "chế độ cổng USB của board (không cần USB-TTL)")
+    if run_usb is not None:
+        checks_usb = [l for l in out_usb.splitlines() if l.startswith("CHECK ")]
+        bad_usb = [l for l in checks_usb if l.startswith("CHECK FAIL")]
+        check(len(checks_usb) >= 45 and not bad_usb,
+              "chế độ cổng USB: cả %d bài kiểm tra firmware đều đạt" % len(checks_usb),
+              " | ".join(bad_usb[:2]))
+        dec_usb = P.FrameDecoder()
+        n_usb = 0
+        for l in out_usb.splitlines():
+            if l.startswith("TX "):
+                n_usb += len(dec_usb.feed(bytes.fromhex(l[3:].strip())))
+        check(n_usb > 30 and dec_usb.n_bad_crc == 0,
+              "chế độ cổng USB: firmware vẫn phát gói đúng chuẩn qua cổng USB",
+              "%d gói, bad_crc=%d" % (n_usb, dec_usb.n_bad_crc))
 
     # ---- gói PC->ESP do bài test C++ sinh ra phải khớp bộ mã hoá của Python ----
     # Mỗi gói được giải mã rồi MÃ HOÁ LẠI bằng protocol.py; hai bộ mã hoá (C++ và Python)

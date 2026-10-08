@@ -29,13 +29,13 @@ PC xác nhận "đã thấy cốc, rót được tối đa N ml" thì nút/mic m
 
 | # | Linh kiện | Ghi chú |
 |---|---|---|
-| 1 | ESP32 DevKit (ESP32-WROOM-32) | bất kỳ board "ESP32 Dev Module" |
+| 1 | **ESP32 DevKit V1** (ESP32-WROOM-32, board 30 chân) | chọn board **"ESP32 Dev Module"** trong Arduino IDE; sơ đồ chân bên dưới đã tính sẵn cho board này |
 | 2 | Module relay 1 kênh **tích cực mức CAO** | nếu module là loại tích cực mức thấp, đổi `RELAY_ACTIVE_HIGH` thành `0` |
 | 3 | Bơm nước mini DC (3–6 V hoặc 12 V tuỳ loại) | **nguồn riêng** cho bơm, không lấy từ ESP32 |
 | 4 | 5 nút nhấn (loại 4 chân hoặc 2 chân) | một chân nối **GND**, chân kia vào GPIO |
 | 5 | HC-SR04 (siêu âm) **hoặc** cảm biến hồng ngoại / công tắc hành trình | mặc định dùng HC-SR04 gắn **trên** khay |
 | 6 | Mic: MAX9814 / MAX4466 (analog) **hoặc** INMP441 / ICS-43434 (I2S) | analog đơn giản hơn |
-| 7 | Mạch USB-TTL (CH340/CP2102) | nối UART2 của ESP32 với máy tính; 3V3 logic, **nối chung GND** |
+| 7 | Mạch USB-TTL (CH340/CP2102) | nối UART2 của ESP32 với máy tính; 3V3 logic, **nối chung GND**. **Không cần** nếu bạn đặt `UART_USE_USB_SERIAL 1` (xem §3b) |
 | 8 | Ống dẫn nước + khay đặt cốc | đặt cốc cùng vị trí mỗi lần để cảm biến ổn định |
 
 > ⚠️ **Nguồn điện:** bơm là tải cảm (có mô-tơ) → **không** cấp trực tiếp từ chân 3V3/5V của ESP32.
@@ -54,13 +54,29 @@ PC xác nhận "đã thấy cốc, rót được tối đa N ml" thì nút/mic m
 | Nút 250 ml | **26** | 〃 |
 | Nút 300 ml | **27** | 〃 |
 | Relay bơm | **23** | **mức CAO = BẬT bơm** (`RELAY_ACTIVE_HIGH 1`) |
-| HC-SR04 TRIG | **5** | |
-| HC-SR04 ECHO | **18** | |
-| Mic analog (MAX9814 OUT) | **35** | chỉ đọc (ADC1), mic điện áp ~1/2 VCC khi im lặng |
-| Mic I2S SCK / WS / SD | **14 / 15 / 33** | chỉ dùng khi `MIC_TYPE 2` |
+| HC-SR04 TRIG | **5** | chân "strapping" — có kéo lên nội, chân TRIG của HC-SR04 là ngõ vào nên vẫn an toàn. Nếu bo không khởi động được, đổi sang **4** |
+| HC-SR04 ECHO | **18** | ngõ vào, chịu được 5 V; nếu dùng loại HC-SR04 3.3 V thì nối thẳng |
+| Mic analog (MAX9814 OUT) | **35** | chỉ đọc, ADC1 (đọc được cả khi bật WiFi), mic ~1/2 VCC khi im lặng |
+| Cảm biến cốc loại số (IR/công tắc) | **19** | chỉ dùng khi `CUP_SENSOR_TYPE 1/2`; `begin()` đặt `INPUT_PULLUP` nên **phải** là chân có kéo lên nội |
+| Mic I2S SCK / WS / SD | **14 / 15 / 21** | chỉ dùng khi `MIC_TYPE 2`; **đừng** dùng GPIO33 (đã là nút 150 ml) |
 | UART2 RX | **16** | ← TX của mạch USB-TTL |
 | UART2 TX | **17** | → RX của mạch USB-TTL (nhớ nối chéo RX↔TX) |
 | LED báo trạng thái | **2** | LED có sẵn trên board devkit |
+
+### ⚠️ Những chân KHÔNG được dùng trên ESP32 DevKit V1
+
+| GPIO | Vấn đề | Ảnh hưởng |
+|---|---|---|
+| 6, 7, 8, 9, 10, 11 | nối thẳng vào chip flash trong | dùng là **bo không khởi động được** |
+| 34, 35, 36, 39 (VP/VN) | **chỉ đọc**, không có điện trở kéo lên nội | đọc ADC (mic) thì tốt; nút bấm `INPUT_PULLUP` thì **không chạy** |
+| 0 (BOOT), 2 (LED xanh), 5, 12, 15 | chân *strapping* — quyết định lúc cấp điện | để mạch ngoài kéo xuống GND lúc bật nguồn là **không boot / không nạp được** |
+| 0, 2, 4, 12, 13, 14, 15, 25, 26, 27 | thuộc **ADC2** | `analogRead()` không đọc được khi WiFi đang bật → mic phải ở **ADC1 (32–39)** |
+
+`config.h` đã được đặt sẵn **đúng theo các quy tắc trên**, và có `static_assert` ở cuối file:
+nếu bạn đổi chân sai (ví dụ đặt relay hay nút vào GPIO 34–39) thì Arduino IDE báo lỗi ngay khi
+biên dịch, chứ không phải chạy mới phát hiện. Bộ kiểm tra trên PC cũng kiểm lại:
+`python3 tools/test_comms.py --only firmware` (không dùng chân flash, không trùng chân, nút không
+ở chân chỉ-đọc, mic ở ADC1).
 
 Sơ đồ nối UART với máy tính:
 
@@ -68,6 +84,24 @@ Sơ đồ nối UART với máy tính:
 ESP32 GPIO16 (RX2) ◄──── TXD  mạch USB-TTL  ────► cổng USB của PC
 ESP32 GPIO17 (TX2) ────► RXD
 ESP32 GND ────────────── GND           (BẮT BUỘC nối chung GND)
+```
+
+Nối nút bấm (làm 5 cái giống nhau):
+
+```
+GPIO32 ──┬── nút 100 ml ──┐
+GPIO33 ──┼── nút 150 ml ──┤
+GPIO25 ──┼── nút 200 ml ──┼── tất cả nối vào GND chung
+GPIO26 ──┼── nút 250 ml ──┤    (INPUT_PULLUP -> nhấn = mức THẤP, không cần trở ngoài)
+GPIO27 ──┴── nút 300 ml ──┘
+```
+
+Relay và bơm (relay **tích cực mức CAO**):
+
+```
+GPIO23 ──── IN  (module relay 1 kênh, VCC 5 V lấy từ nguồn riêng hoặc chân 5V của board)
+COM của relay ──── + nguồn bơm (nguồn RIÊNG, đủ dòng cho bơm)
+NO  của relay ──── + của bơm        GND bơm ──── GND chung với ESP32
 ```
 
 LED báo trạng thái: nháy chậm = chờ đặt cốc · **nháy nhanh = chờ PC xác nhận cốc** ·
@@ -91,6 +125,29 @@ LED báo trạng thái: nháy chậm = chờ đặt cốc · **nháy nhanh = ch�
 6. Bấm **Upload** (mũi tên →). Nếu báo lỗi `Failed to connect` → **giữ nút BOOT** trên board khi nó
    hiện `Connecting...` rồi thả ra.
 7. Mở **Serial Monitor** (115200 baud) để xem log tiếng Việt của firmware.
+
+### 3b) Không có mạch USB-TTL? Dùng luôn cổng USB của board
+
+Board ESP32 DevKit V1 đã có sẵn chip USB-UART nối vào **UART0** (cổng USB). Firmware có thể nói
+chuyện với phần mềm PC qua chính cổng đó, **không cần thêm linh kiện nào**:
+
+1. Trong `config.h` sửa:
+   ```c
+   #define UART_USE_USB_SERIAL 1   // nói chuyện với PC qua cáp USB của board
+   #define DEBUG_SERIAL        0   // BẮT BUỘC: một cổng USB không thể vừa log vừa gửi gói tin
+   ```
+   (Đặt `UART_USE_USB_SERIAL 1` mà quên `DEBUG_SERIAL 0` thì Arduino IDE báo lỗi ngay khi biên dịch.)
+2. Nạp firmware xong, **cắm cáp USB vào máy tính** rồi chạy như bình thường:
+   ```bash
+   python3 tools/web.py --port COM5        # Windows: xem cổng ở Device Manager ▸ Ports
+   python3 tools/esp_cli.py --port COM5    # hoặc dòng lệnh
+   ```
+3. Lưu ý: mỗi lần phần mềm PC **mở cổng COM**, board bị reset (do chân DTR/RTS) — firmware khởi
+   động lại rồi tự gửi `HELLO`, chỉ chậm khoảng 0.5 s. Khi đang chạy mà bạn mở Serial Monitor
+   thì cũng sẽ làm board reset và làm nhiễu gói tin → **đóng Serial Monitor** khi dùng chương trình PC.
+
+> Bộ test trên PC chạy **cả hai** cấu hình này: `python3 tools/test_comms.py --only fwrun`
+> sẽ biên dịch và chạy 45 bài kiểm tra hai lần (UART2 và cổng USB).
 
 ### Nạp bằng PlatformIO (nếu bạn thích dòng lệnh)
 
@@ -124,6 +181,8 @@ Toàn bộ thông số "phải chỉnh theo máy thật" nằm trong **`firmware
 | `FLOW_ML_PER_S` | lưu lượng bơm thật (ml/s) khi 100 % | **hiệu chuẩn** theo §5 |
 | `MAX_FILL_ML` | trần tuyệt đối, ESP tự ngắt | an toàn |
 | `LINK_TIMEOUT_MS` | mất UART bao lâu thì ngắt bơm | an toàn |
+| `UART_USE_USB_SERIAL` | `1` = dùng luôn cổng USB của board làm kênh nối PC (không cần USB-TTL) | khi không có mạch USB-TTL — xem §3b |
+| `DEBUG_SERIAL` | `1` = in log ra cổng USB để xem trên Serial Monitor | phải để `0` nếu `UART_USE_USB_SERIAL 1` |
 
 Sau khi sửa `config.h` → nạp lại. Chạy `python3 tools/test_comms.py --only firmware` trên PC sẽ
 kiểm tra nhanh xem `config.h` có khớp với cấu hình bên PC không (preset, cờ, chân...).
@@ -254,7 +313,7 @@ Bộ kiểm tra trên PC đối chiếu **từng byte** giữa C++ trong firmwar
 các kịch bản (khoá nút → CUP_OK → bơm → nhấc cốc → ngắt bơm):
 
 ```bash
-python3 tools/test_comms.py                 # toàn bộ (151 bài)
+python3 tools/test_comms.py                 # toàn bộ (157 bài)
 python3 tools/test_comms.py --only firmware # chỉ phần config/sketch
 python3 tools/test_comms.py --only fwrun    # CHẠY THẬT firmware trên PC (máy ảo mini)
 ```

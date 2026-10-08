@@ -3,6 +3,20 @@
 //
 //  >>> CHỈNH FILE NÀY THEO MẠCH THẬT CỦA BẠN RỒI NẠP LẠI <<<
 //
+//  BOARD ĐANG DÙNG: ESP32 DevKit V1 (ESP32-WROOM-32, board 30 chân - "ESP32 Dev Module")
+//  Vài giới hạn của board này PHẢI nhớ khi đổi chân:
+//    * GPIO 6..11  : nối vào chip flash trong -> TUYỆT ĐỐI không dùng (mất boot).
+//    * GPIO 34..39 : CHỈ ĐỌC, KHÔNG có điện trở kéo lên nội -> hợp với ADC (mic),
+//                    nhưng nút bấm kiểu INPUT_PULLUP thì KHÔNG chạy được ở đây.
+//    * GPIO 0, 2, 5, 12, 15 : chân "strapping" (quyết định lúc khởi động).
+//                    GPIO 5 và 15 có kéo lên nội nên dùng làm NGÕ RA vẫn tốt, nhưng
+//                    đừng để mạch ngoài kéo 2 chân này xuống GND lúc cấp điện.
+//    * ADC2 (GPIO 0,2,4,12,13,14,15,25,26,27) KHÔNG đọc được khi WiFi đang bật
+//                    -> mic analog phải dùng ADC1 (GPIO 32..39), đang dùng GPIO35.
+//    * GPIO 2 có LED xanh có sẵn trên board -> đừng đổi PIN_LED sang chân đang bận.
+//  Các quy tắc trên được kiểm tra tự động khi biên dịch (xem cuối file) và trong
+//  `python3 tools/test_comms.py --only firmware`.
+//
 //  Quy ước đã chốt với phần mềm PC (đừng đổi nếu không sửa cả hai bên):
 //    * Nút bấm : TÍCH CỰC MỨC THẤP (nhấn = LOW), chân đọc để INPUT_PULLUP
 //    * Relay   : TÍCH CỰC MỨC CAO  (bật bơm = mức HIGH)
@@ -20,10 +34,26 @@
 #define FW_NAME            "cup_filler_esp32"
 
 #define UART_BAUD          921600     // 921600 để đủ chỗ truyền audio PCM lên PC
-#define PIN_UART_RX        16         // ESP32 RX2  <- TX của mạch USB-UART/PC
-#define PIN_UART_TX        17         // ESP32 TX2  -> RX của mạch USB-UART/PC
+
+// Kênh nói chuyện với PC:
+//   0 = UART2 trên GPIO16/17 -> cần thêm mạch USB-TTL cắm vào máy tính (mặc định)
+//   1 = dùng LUÔN cổng USB có sẵn của board ESP32 DevKit V1 (không cần mạch USB-TTL).
+//       Khi bật 1: PHẢI đặt DEBUG_SERIAL 0 (chỉ có một cổng USB, log sẽ lẫn vào gói tin),
+//       và mỗi lần PC mở cổng COM thì board bị reset (do chân DTR/RTS) - firmware khởi
+//       động lại rồi tự bắt tay HELLO, chạy bình thường.
+#ifndef UART_USE_USB_SERIAL
+#define UART_USE_USB_SERIAL 0
+#endif
+#define PIN_UART_RX        16         // ESP32 RX2  <- TX của mạch USB-UART/PC (khi mục trên = 0)
+#define PIN_UART_TX        17         // ESP32 TX2  -> RX của mạch USB-UART/PC (khi mục trên = 0)
 #define UART_RX_BUDGET     512        // số byte tối đa đọc mỗi vòng loop()
+#ifndef DEBUG_SERIAL
 #define DEBUG_SERIAL       1          // 1 = in log ra cổng USB (Serial) để xem trên Serial Monitor
+#endif
+
+#if UART_USE_USB_SERIAL && DEBUG_SERIAL
+#error "UART_USE_USB_SERIAL=1 thi phai dat DEBUG_SERIAL=0 (mot cong USB khong the vua log vua noi chuyen voi PC)"
+#endif
 
 // ---------------------------------------------------------------------------
 //  Nút bấm chọn mức nước  (TÍCH CỰC MỨC THẤP - INPUT_PULLUP)
@@ -35,7 +65,7 @@
 #define BUTTON_ESTOP_MS    2000       // >= mức này = DỪNG KHẨN CẤP (ngắt bơm ngay)
 
 // Chân cho từng nút (theo thứ tự preset: 100/150/200/250/300 ml)
-static const uint8_t BUTTON_PINS[N_BUTTONS] = {32, 33, 25, 26, 27};
+static constexpr uint8_t BUTTON_PINS[N_BUTTONS] = {32, 33, 25, 26, 27};
 // Mức nước tương ứng (ml) - phải khớp control.presets_ml trong settings.yaml
 static const uint16_t PRESET_ML[N_BUTTONS] = {100, 150, 200, 250, 300};
 #define PRESET_INDEX_DEFAULT 2        // 200 ml
@@ -65,7 +95,8 @@ static const uint16_t PRESET_ML[N_BUTTONS] = {100, 150, 200, 250, 300};
 #define CUP_SENSOR_TYPE    0
 #define PIN_TRIG           5          // HC-SR04
 #define PIN_ECHO           18
-#define PIN_CUP_DIGITAL    34         // dùng cho loại 1 / 2 (chỉ đọc - input only)
+#define PIN_CUP_DIGITAL    19         // dùng cho loại 1 / 2 (phải là chân CÓ kéo lên nội,
+                                      // vì begin() đặt INPUT_PULLUP; GPIO 34..39 không có)
 #define CUP_BASELINE_MM    150.0f     // khoảng cách khi KHAY TRỐNG (đo lúc khởi động)
 #define CUP_MIN_HEIGHT_MM  30.0f      // thấp hơn mức này coi như không có cốc
 #define CUP_MAX_DISTANCE_MM 400.0f    // xa hơn mức này -> bỏ qua (không có gì)
@@ -87,7 +118,8 @@ static const uint16_t PRESET_ML[N_BUTTONS] = {100, 150, 200, 250, 300};
 #define PIN_MIC_ADC        35         // mic analog (chỉ đọc)
 #define PIN_I2S_SCK        14         // INMP441: SCK
 #define PIN_I2S_WS         15         // INMP441: WS
-#define PIN_I2S_SD         33         // INMP441: SD (dữ liệu ra)
+#define PIN_I2S_SD         21         // INMP441: SD (dữ liệu ra). ĐỪNG dùng GPIO33:
+                                      // GPIO33 đã là nút 150 ml trong BUTTON_PINS
 #define MIC_GAIN_NUM       3          // khuếch đại số (tử)
 #define MIC_GAIN_DEN       1          // khuếch đại số (mẫu)  -> 3/1 = x3
 #define VAD_ON_RMS         260        // RMS (thang 0..32767) để coi là có tiếng
@@ -120,5 +152,33 @@ static const uint16_t PRESET_ML[N_BUTTONS] = {100, 150, 200, 250, 300};
 // LED báo trạng thái (GPIO2 = LED onboard trên board devkit)
 #define PIN_LED            2
 #define USE_STATUS_LED     1
+
+// ---------------------------------------------------------------------------
+//  TỰ KIỂM TRA CHÂN THEO BOARD ESP32 DevKit V1 - sai chân là báo lỗi khi biên dịch
+// ---------------------------------------------------------------------------
+static constexpr bool cfPinIsFlash(int p) { return p >= 6 && p <= 11; }      // flash trong
+static constexpr bool cfPinInputOnly(int p) { return p >= 34 && p <= 39; }   // không kéo lên được
+
+static_assert(!cfPinIsFlash(PIN_UART_RX) && !cfPinIsFlash(PIN_UART_TX),
+              "UART2: GPIO 6..11 noi vao flash trong, khong dung duoc");
+static_assert(!cfPinInputOnly(PIN_UART_RX) && !cfPinInputOnly(PIN_UART_TX),
+              "UART2: GPIO 34..39 chi doc duoc, khong lam TX/RX");
+static_assert(!cfPinIsFlash(PIN_TRIG) && !cfPinIsFlash(PIN_ECHO),
+              "HC-SR04: GPIO 6..11 la chan flash, khong dung duoc");
+static_assert(!cfPinIsFlash(PIN_RELAY) && !cfPinInputOnly(PIN_RELAY),
+              "Relay phai o chan co the XUAT muc (khong dung 6..11 hoac 34..39)");
+static_assert(!cfPinIsFlash(PIN_LED) && !cfPinInputOnly(PIN_LED),
+              "LED bao trang thai phai o chan co the XUAT muc");
+static_assert(!cfPinIsFlash(PIN_CUP_DIGITAL), "Cam bien coc: GPIO 6..11 la chan flash");
+static_assert(!cfPinIsFlash(PIN_MIC_ADC) && !cfPinIsFlash(PIN_I2S_SCK) &&
+              !cfPinIsFlash(PIN_I2S_WS) && !cfPinIsFlash(PIN_I2S_SD),
+              "Mic: GPIO 6..11 la chan flash, khong dung duoc");
+// Nút bấm dùng INPUT_PULLUP -> phải ở chân có kéo lên nội (KHÔNG dùng 34..39)
+static_assert(!cfPinInputOnly(BUTTON_PINS[0]) && !cfPinInputOnly(BUTTON_PINS[1]) &&
+              !cfPinInputOnly(BUTTON_PINS[2]) && !cfPinInputOnly(BUTTON_PINS[3]) &&
+              !cfPinInputOnly(BUTTON_PINS[4]) && !cfPinIsFlash(BUTTON_PINS[0]) &&
+              !cfPinIsFlash(BUTTON_PINS[1]) && !cfPinIsFlash(BUTTON_PINS[2]) &&
+              !cfPinIsFlash(BUTTON_PINS[3]) && !cfPinIsFlash(BUTTON_PINS[4]),
+              "Nut bam: phai o chan co keo len noi, khong dung GPIO 6..11 / 34..39");
 
 #endif  // CUPFILLER_CONFIG_H
