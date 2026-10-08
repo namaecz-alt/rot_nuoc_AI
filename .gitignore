@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Dữ liệu / mô hình sinh ra trong lúc chạy (không cần đưa lên git)
+cup_filler_pc/datasets/_auto/
+cup_filler_pc/weights/*.onnx
+runs/
+*.pt.tmp
+
+# IDE / hệ điều hành
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

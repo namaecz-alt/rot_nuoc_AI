@@ -1,0 +1,60 @@
+# VECTOR VANG GIAO THUC CUPFILLER - KHONG SUA TAY!
+#
+# File nay do tools/gen_protocol_vectors.py sinh ra tu cupfiller/protocol_vectors.py.
+# No la 'ban ghi tren day' de PC (Python) va ESP32 (C++) doi chieu tung byte.
+#
+# Dinh dang moi dong:
+#   <ten> <msg_hex> <seq> <frame_hex> | <payload_hex> | key=value ...
+#   - msg_hex  : 1 byte ma goi tin (vd 02)
+#   - frame_hex: TOAN BO khung tren day, gom AA 55 ... CRC (cach nhau dau cach)
+#   - payload_hex: chi phan payload (de doi chieu nhanh)
+#   - key=value: cac truong da giai ma; chuoi dung '_' thay cho dau cach
+#   - dir=esp2pc|pc2esp cho biet ben nao gui
+#
+# Quy tac: ESP->PC thi firmware phai TAO RA dung frame_hex nay;
+#          PC->ESP thi Python phai TAO RA dung frame_hex nay.
+
+hello_boot msg=01 seq=1 dir=esp2pc frame=AA 55 12 01 01 01 07 05 00 90 01 64 00 96 00 C8 00 FA 00 2C 01 DD 6D | payload=01 07 05 00 90 01 64 00 96 00 C8 00 FA 00 2C 01 | version=1 caps=7 flow_ml_s_x10=400 presets=100,150,200,250,300
+hello_flow_cal msg=01 seq=7 dir=esp2pc frame=AA 55 0C 07 01 01 01 02 00 3F 02 64 00 C8 00 EB 5F | payload=01 01 02 00 3F 02 64 00 C8 00 | version=1 caps=1 flow_ml_s_x10=575 presets=100,200
+cup_placed msg=02 seq=2 dir=esp2pc frame=AA 55 0D 02 02 5C 00 96 00 3A 00 01 39 30 00 00 A5 06 | payload=5C 00 96 00 3A 00 01 39 30 00 00 | distance_mm=92 baseline_mm=150 height_mm=58 flags=1 uptime_ms=12345
+cup_placed_retry msg=02 seq=9 dir=esp2pc frame=AA 55 0D 09 02 00 00 96 00 00 00 02 05 00 00 00 14 C2 | payload=00 00 96 00 00 00 02 05 00 00 00 | distance_mm=0 baseline_mm=150 height_mm=0 flags=2 uptime_ms=5
+cup_removed msg=03 seq=3 dir=esp2pc frame=AA 55 07 03 03 02 20 4E 00 00 25 95 | payload=02 20 4E 00 00 | reason=2 uptime_ms=20000
+preset_selected_button msg=04 seq=4 dir=esp2pc frame=AA 55 06 04 04 02 C8 00 00 72 BD | payload=02 C8 00 00 | index=2 ml=200 source=0
+preset_selected_voice msg=04 seq=5 dir=esp2pc frame=AA 55 06 05 04 04 2C 01 01 AA 80 | payload=04 2C 01 01 | index=4 ml=300 source=1
+fill_started_esp msg=05 seq=6 dir=esp2pc frame=AA 55 08 06 05 C8 00 00 00 3E 01 28 4D | payload=C8 00 00 00 3E 01 | ml=200 mode=0 source=0 max_ml=318
+fill_started_pc msg=05 seq=8 dir=esp2pc frame=AA 55 08 08 05 96 00 01 02 F4 01 45 C2 | payload=96 00 01 02 F4 01 | ml=150 mode=1 source=2 max_ml=500
+fill_progress msg=06 seq=10 dir=esp2pc frame=AA 55 08 0A 06 78 00 3C C8 00 04 03 E5 | payload=78 00 3C C8 00 04 | poured_ml=120 pct=60 target_ml=200 state=4
+fill_progress_start msg=06 seq=11 dir=esp2pc frame=AA 55 08 0B 06 00 00 00 64 00 04 28 41 | payload=00 00 00 64 00 04 | poured_ml=0 pct=0 target_ml=100 state=4
+fill_done_normal msg=07 seq=12 dir=esp2pc frame=AA 55 0B 0C 07 C8 00 C8 00 00 24 13 00 00 5D BE | payload=C8 00 C8 00 00 24 13 00 00 | poured_ml=200 target_ml=200 status=0 elapsed_ms=4900
+fill_done_cup_removed msg=07 seq=13 dir=esp2pc frame=AA 55 0B 0D 07 3D 00 C8 00 02 DC 05 00 00 7F AA | payload=3D 00 C8 00 02 DC 05 00 00 | poured_ml=61 target_ml=200 status=2 elapsed_ms=1500
+status_ready msg=08 seq=14 dir=esp2pc frame=AA 55 0E 0E 08 03 1B 00 00 C8 00 3E 01 E8 80 00 00 EB F4 | payload=03 1B 00 00 C8 00 3E 01 E8 80 00 00 | state=3 flags=27 poured_ml=0 target_ml=200 max_ml=318 uptime_ms=33000
+status_pouring msg=08 seq=15 dir=esp2pc frame=AA 55 0E 0F 08 04 17 78 00 C8 00 3E 01 C4 86 00 00 1E 2B | payload=04 17 78 00 C8 00 3E 01 C4 86 00 00 | state=4 flags=23 poured_ml=120 target_ml=200 max_ml=318 uptime_ms=34500
+status_manual msg=08 seq=16 dir=esp2pc frame=AA 55 0E 10 08 07 21 00 00 C8 00 F4 01 B8 82 01 00 E6 32 | payload=07 21 00 00 C8 00 F4 01 B8 82 01 00 | state=7 flags=33 poured_ml=0 target_ml=200 max_ml=500 uptime_ms=99000
+voice_event_2peaks msg=09 seq=17 dir=esp2pc frame=AA 55 0A 11 09 02 01 57 02 8C 05 0C 03 58 28 | payload=02 01 57 02 8C 05 0C 03 | kind=2 index=1 confidence=87 n_peaks=2 rms=1420 dur_ms=780
+voice_event_zero msg=09 seq=18 dir=esp2pc frame=AA 55 0A 12 09 00 00 00 00 00 00 00 00 F2 5E | payload=00 00 00 00 00 00 00 00 | kind=0 index=0 confidence=0 n_peaks=0 rms=0 dur_ms=0
+audio_chunk msg=0A seq=19 dir=esp2pc frame=AA 55 0E 13 0A 00 01 04 00 64 00 9C FF FF 7F 00 80 76 33 | payload=00 01 04 00 64 00 9C FF FF 7F 00 80 | seq8=0 flags=1 n_samples=4 first=100 last=-32768
+audio_chunk_end_silence msg=0A seq=20 dir=esp2pc frame=AA 55 0E 14 0A 09 02 04 00 00 00 00 00 00 00 00 00 78 10 | payload=09 02 04 00 00 00 00 00 00 00 00 00 | seq8=9 flags=2 n_samples=4 first=0 last=0
+audio_chunk_96 msg=0A seq=21 dir=esp2pc frame=AA 55 C6 15 0A FF 02 60 00 D0 FF D1 FF D2 FF D3 FF D4 FF D5 FF D6 FF D7 FF D8 FF D9 FF DA FF DB FF DC FF DD FF DE FF DF FF E0 FF E1 FF E2 FF E3 FF E4 FF E5 FF E6 FF E7 FF E8 FF E9 FF EA FF EB FF EC FF ED FF EE FF EF FF F0 FF F1 FF F2 FF F3 FF F4 FF F5 FF F6 FF F7 FF F8 FF F9 FF FA FF FB FF FC FF FD FF FE FF FF FF 00 00 01 00 02 00 03 00 04 00 05 00 06 00 07 00 08 00 09 00 0A 00 0B 00 0C 00 0D 00 0E 00 0F 00 10 00 11 00 12 00 13 00 14 00 15 00 16 00 17 00 18 00 19 00 1A 00 1B 00 1C 00 1D 00 1E 00 1F 00 20 00 21 00 22 00 23 00 24 00 25 00 26 00 27 00 28 00 29 00 2A 00 2B 00 2C 00 2D 00 2E 00 2F 00 AF 59 | payload=FF 02 60 00 D0 FF D1 FF D2 FF D3 FF D4 FF D5 FF D6 FF D7 FF D8 FF D9 FF DA FF DB FF DC FF DD FF DE FF DF FF E0 FF E1 FF E2 FF E3 FF E4 FF E5 FF E6 FF E7 FF E8 FF E9 FF EA FF EB FF EC FF ED FF EE FF EF FF F0 FF F1 FF F2 FF F3 FF F4 FF F5 FF F6 FF F7 FF F8 FF F9 FF FA FF FB FF FC FF FD FF FE FF FF FF 00 00 01 00 02 00 03 00 04 00 05 00 06 00 07 00 08 00 09 00 0A 00 0B 00 0C 00 0D 00 0E 00 0F 00 10 00 11 00 12 00 13 00 14 00 15 00 16 00 17 00 18 00 19 00 1A 00 1B 00 1C 00 1D 00 1E 00 1F 00 20 00 21 00 22 00 23 00 24 00 25 00 26 00 27 00 28 00 29 00 2A 00 2B 00 2C 00 2D 00 2E 00 2F 00 | seq8=255 flags=2 n_samples=96 first=-48 last=47
+button_short msg=0B seq=22 dir=esp2pc frame=AA 55 07 16 0B 02 28 00 00 03 B7 65 | payload=02 28 00 00 03 | index=2 event=0 press_ms=40 state=3
+button_long msg=0B seq=23 dir=esp2pc frame=AA 55 07 17 0B 04 40 06 01 03 D3 4D | payload=04 40 06 01 03 | index=4 event=1 press_ms=1600 state=3
+button_estop msg=0B seq=24 dir=esp2pc frame=AA 55 07 18 0B 00 34 08 02 04 0D F8 | payload=00 34 08 02 04 | index=0 event=2 press_ms=2100 state=4
+error_esp msg=0C seq=25 dir=esp2pc frame=AA 55 33 19 0C 01 50 43 5F 6B 68 6F 6E 67 5F 74 72 61 5F 6C 6F 69 5F 43 55 50 5F 4F 4B 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 90 0A | payload=01 50 43 5F 6B 68 6F 6E 67 5F 74 72 61 5F 6C 6F 69 5F 43 55 50 5F 4F 4B 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 | code=1 text=PC_khong_tra_loi_CUP_OK
+ack_esp msg=0D seq=26 dir=esp2pc frame=AA 55 04 1A 0D 82 00 AD D4 | payload=82 00 | acked_msg=130 status=0
+pong msg=0E seq=27 dir=esp2pc frame=AA 55 08 1B 0E F1 FB 09 00 04 17 CE B2 | payload=F1 FB 09 00 04 17 | uptime_ms=654321 state=4 flags=23
+log msg=0F seq=28 dir=esp2pc frame=AA 55 11 1C 0F 44 41 5F 44 41 54 5F 43 4F 43 5F 35 38 6D 6D 39 9A | payload=44 41 5F 44 41 54 5F 43 4F 43 5F 35 38 6D 6D | text=DA_DAT_COC_58mm
+hello_ack msg=81 seq=30 dir=pc2esp frame=AA 55 0F 1E 81 01 0B 05 64 00 96 00 C8 00 FA 00 2C 01 13 E3 | payload=01 0B 05 64 00 96 00 C8 00 FA 00 2C 01 | version=1 caps=11 presets=100,150,200,250,300
+cup_ok msg=82 seq=31 dir=pc2esp frame=AA 55 1C 1F 82 3B 01 04 01 00 04 5E 01 5C 03 63 75 70 41 00 00 00 00 00 00 00 00 00 00 00 00 C5 DF | payload=3B 01 04 01 00 04 5E 01 5C 03 63 75 70 41 00 00 00 00 00 00 00 00 00 00 00 00 | rim_r_mm=31.5 base_r_mm=26.0 height_mm=102.4 max_ml=350 confidence=0.92 flags=3 label=cupA
+cup_ok_zero msg=82 seq=32 dir=pc2esp frame=AA 55 1C 20 82 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 47 FA | payload=00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 | rim_r_mm=0.0 base_r_mm=0.0 height_mm=0.0 max_ml=0 confidence=0.0 flags=0 label=
+cup_reject msg=83 seq=33 dir=pc2esp frame=AA 55 33 21 83 00 6B 68 6F 6E 67 5F 74 68 61 79 5F 63 6F 63 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 8D 42 | payload=00 6B 68 6F 6E 67 5F 74 68 61 79 5F 63 6F 63 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 | reason=0 text=khong_thay_coc
+set_preset msg=84 seq=34 dir=pc2esp frame=AA 55 06 22 84 01 96 00 02 1A D9 | payload=01 96 00 02 | index=1 ml=150 source=2
+start_fill_esp_open_loop msg=85 seq=35 dir=pc2esp frame=AA 55 08 23 85 C8 00 00 02 20 4E 30 22 | payload=C8 00 00 02 20 4E | ml=200 mode=0 source=2 timeout_ms=20000
+start_fill_pc_closed_loop msg=85 seq=36 dir=pc2esp frame=AA 55 08 24 85 FA 00 01 02 00 00 BC 98 | payload=FA 00 01 02 00 00 | ml=250 mode=1 source=2 timeout_ms=0
+stop_fill msg=86 seq=37 dir=pc2esp frame=AA 55 03 25 86 01 35 D3 | payload=01 | reason=1
+set_mode_on msg=87 seq=38 dir=pc2esp frame=AA 55 06 26 87 03 00 04 00 1E FA | payload=03 00 04 00 | on=3 off=4
+pump_set_50 msg=88 seq=39 dir=pc2esp frame=AA 55 05 27 88 32 00 00 4F D1 | payload=32 00 00 | duty_pct=50 duration_ms=0
+pump_set_pulse msg=88 seq=40 dir=pc2esp frame=AA 55 05 28 88 4B 20 03 AA C4 | payload=4B 20 03 | duty_pct=75 duration_ms=800
+set_params_all msg=89 seq=41 dir=pc2esp frame=AA 55 0A 29 89 A9 01 90 01 1E 00 F4 01 F2 C2 | payload=A9 01 90 01 1E 00 F4 01 | flow_ml_s_x10=425 max_ml=400 timeout_s=30 pulse_ms=500
+set_params_keep msg=89 seq=42 dir=pc2esp frame=AA 55 0A 2A 89 FF FF FF FF FF FF FF FF 71 A0 | payload=FF FF FF FF FF FF FF FF | flow_ml_s_x10=65535 max_ml=65535 timeout_s=65535 pulse_ms=65535
+cmd_tare msg=8A seq=43 dir=pc2esp frame=AA 55 05 2B 8A 02 00 00 A9 72 | payload=02 00 00 | cmd=2 arg=0
+cmd_self_test msg=8A seq=44 dir=pc2esp frame=AA 55 05 2C 8A 04 2C 01 77 F4 | payload=04 2C 01 | cmd=4 arg=300
+ping msg=8B seq=45 dir=pc2esp frame=AA 55 06 2D 8B 40 E2 01 00 73 76 | payload=40 E2 01 00 | uptime_ms=123456
