@@ -1,0 +1,23 @@
+{
+  "model": "Ultralytics YOLO11n fine-tuned from COCO pretrained weights",
+  "class_names": [
+    "cup"
+  ],
+  "epochs": 8,
+  "image_size": 320,
+  "device": "CPU",
+  "train_images": 240,
+  "validation_images": 60,
+  "validation_synthetic_only": {
+    "precision": 0.999,
+    "recall": 1.0,
+    "mAP50": 0.995,
+    "mAP50_95": 0.948
+  },
+  "heldout_synthetic_detector_test": {
+    "images": 30,
+    "cup_found": 30,
+    "waterline_found_classical": 28
+  },
+  "important_limit": "These numbers are for generated synthetic backlight scenes, not real webcam photos. Add and label real photos of the target transparent cup before judging real-world accuracy."
+}

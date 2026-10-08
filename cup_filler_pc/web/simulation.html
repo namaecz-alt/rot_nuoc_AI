@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mô phỏng máy rót nước — nhận diện cốc trong suốt</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161d26;--line:#2b3644;--ink:#e8eef4;--accent:#2a9d8f;--warn:#e9c46a;--bad:#e76f51}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+  header{padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header b{font-size:16px}
+  main{display:flex;gap:16px;flex-wrap:wrap;padding:16px;align-items:flex-start}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  canvas{border-radius:10px;background:#000;display:block}
+  button{background:#33404b;border:0;color:var(--ink);border-radius:8px;padding:9px 14px;margin:3px 4px 3px 0;cursor:pointer;font-size:14px}
+  button.primary{background:var(--accent)}
+  button.danger{background:var(--bad)}
+  button.preset.on{background:var(--warn);color:#20180a;font-weight:700}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:8px;margin:10px 0}
+  .kpi{background:#0f151b;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  .kpi b{display:block;font-size:19px}
+  .kpi span{color:#93a4b3;font-size:11px}
+  .state{display:inline-block;padding:3px 10px;border-radius:6px;background:#33404b;font-weight:700}
+  .state.DONE{background:var(--accent)}.state.FAULT{background:var(--bad)}
+  .state.COARSE,.state.FINE,.state.PRIME,.state.TOPUP{background:var(--warn);color:#20180a}
+  label{display:block;margin:8px 0 2px;color:#93a4b3;font-size:12px}
+  input[type=range]{width:100%}
+  #log{height:118px;overflow:auto;background:#0f151b;border:1px solid var(--line);border-radius:8px;padding:8px;font:12px/1.5 ui-monospace,Consolas,monospace;color:#9fd3c8}
+  .hint{color:#93a4b3;font-size:12px}
+  h3{margin:2px 0 8px;font-size:13px;color:#93a4b3;text-transform:uppercase;letter-spacing:.06em}
+</style>
+</head>
+<body>
+<header><b>💧 Mô phỏng máy rót nước tự động</b> — cốc trong suốt + đèn nền + vòng kín thị giác
+  <div class="hint">Mô phỏng đúng kiến trúc điều khiển trong code Python: định lượng thô theo tích phân lưu lượng → học ánh xạ ml→mm trong lúc rót → tinh chỉnh theo vạch nước.</div>
+</header>
+<main>
+  <div class="panel">
+    <canvas id="cv" width="420" height="520"></canvas>
+  </div>
+  <div class="panel" style="flex:1;min-width:300px">
+    <h3>Điều khiển</h3>
+    <div id="presets"></div>
+    <button id="start" class="primary">▶ Đặt cốc &amp; rót</button>
+    <button id="remove">🥤 Lấy cốc ra</button>
+    <button id="stop" class="danger">■ Dừng</button>
+    <div class="kpis">
+      <div class="kpi"><b id="kState"><span class="state">IDLE</span></b><span>trạng thái</span></div>
+      <div class="kpi"><b id="kH">0</b><span>mm nước (đo)</span></div>
+      <div class="kpi"><b id="kT">0</b><span>mm đích</span></div>
+      <div class="kpi"><b id="kV">0</b><span>ml thật trong cốc</span></div>
+      <div class="kpi"><b id="kE">—</b><span>sai số lần rót</span></div>
+    </div>
+    <h3>Thông số giả lập</h3>
+    <label>Trễ bơm + ống: <span id="vLag">0.45</span> s</label>
+    <input id="lag" type="range" min="0.1" max="1.2" step="0.05" value="0.45">
+    <label>Nhiễu đo vạch nước: <span id="vNoise">0.8</span> mm</label>
+    <input id="noise" type="range" min="0" max="3" step="0.1" value="0.8">
+    <label>Lưu lượng bơm tối đa: <span id="vFlow">40</span> ml/s</label>
+    <input id="flow" type="range" min="15" max="60" step="1" value="40">
+    <h3>Nhật ký</h3>
+    <div id="log"></div>
+  </div>
+</main>
+<script>
+"use strict";
+// ============================ VẬT LÝ CỐC =================================
+const CUPS = [
+  {name:"Cốc A", h:100, r0:30, r1:37},
+  {name:"Cốc B cao hẹp", h:120, r0:26, r1:40},
+  {name:"Cốc C loe", h:130, r0:33, r1:42},
+];
+let cup = CUPS[0];
+const area = h => { const t=Math.min(Math.max(h/cup.h,0),1); const r=cup.r0+(cup.r1-cup.r0)*t; return Math.PI*r*r; };
+const volOf = h => { // ml
+  h=Math.min(Math.max(h,0),cup.h); const t=h/cup.h, r=cup.r0+(cup.r1-cup.r0)*t;
+  return Math.PI*h*(cup.r0*cup.r0+cup.r0*r+r*r)/3/1000;
+};
+const hOfVol = v => { let lo=0, hi=cup.h; for(let i=0;i<40;i++){const m=.5*(lo+hi); (volOf(m)<v)?lo=m:hi=m;} return .5*(lo+hi); };
+
+// ============================ TRẠNG THÁI =================================
+const S = { IDLE:0, CHECK:1, PRIME:2, COARSE:3, FINE:4, SETTLING:5, TOPUP:6, DONE:7, FAULT:8 };
+const SNAME = ["IDLE","CHECK_CUP","PRIME","COARSE","FINE","SETTLING","TOPUP","DONE","FAULT"];
+let st=S.IDLE, tState=0, elapsed=0;
+let preset=200, target_mm=0, hTrue=0, hMeas=0, flowCmd=0, flowReal=0, vcmd=0;
+let samples=[], fit=null, pulses=0, settleT=0, topupT=0, lastErr=null;
+let cupPresent=false, stable=0, measBuf=[];
+let pwm=0;
+
+// tham số người dùng chỉnh
+const P = { lag:0.45, noise:0.8, flowMax:40, latency:0.25 };
+
+// ============================ ĐIỀU KHIỂN =================================
+function flowAt(p){ return p<=0?0:P.flowMax*Math.pow(p,1.25); }         // đường cong bơm
+function pwmFor(f){ return Math.min(1, Math.pow(Math.max(f,0)/P.flowMax, 1/1.25)); }
+
+function refit(){
+  if (samples.length<6) return;
+  const n=samples.length;
+  let sx=0,sy=0,sxx=0,sxy=0;
+  for(const [v,h] of samples){sx+=v;sy+=h;sxx+=v*v;sxy+=v*h;}
+  const d=n*sxx-sx*sx; if (Math.abs(d)<1e-9) return;
+  const b=(n*sxy-sx*sy)/d, a=(sy-b*sx)/n;
+  if (b<=0.005) return;
+  const tgt=a+b*preset;
+  if (tgt>4 && tgt<cup.h-3){ fit=[a,b]; target_mm=tgt; }
+}
+
+function setState(s){ st=s; tState=0; }
+function log(m){ const el=document.getElementById("log"); el.innerHTML += m+"<br>"; el.scrollTop=el.scrollHeight; }
+
+function tick(dt){
+  elapsed+=dt; tState+=dt;
+  // --- bơm: trễ bậc nhất + nước đang bay
+  flowReal += (flowCmd-flowReal)*Math.min(dt/P.lag,1);
+  const inFlight = flowReal*0.09;
+  if (cupPresent) hTrue = hOfVol(volOf(hTrue) + (flowReal*dt)/1.0*1.0*0.001*1000/1); // ml->mm qua diện tích
+  // đo: trễ + nhiễu
+  measBuf.push([elapsed, hTrue + (Math.random()*2-1)*P.noise]);
+  while (measBuf.length && elapsed-measBuf[0][0] > P.latency) measBuf.shift();
+  hMeas = measBuf.length? measBuf[0][1] : hTrue;
+
+  if (st===S.IDLE){ flowCmd=0; }
+  else if (st===S.CHECK){
+    flowCmd=0;
+    if (cupPresent){ stable++; if (stable>=4){ target_mm=Math.min(hOfVol(preset), cup.h-6); setState(S.PRIME); log("→ PRIME: cốc đã nhận diện, đích tạm "+target_mm.toFixed(0)+" mm"); } }
+    else stable=0;
+  }
+  else if (st===S.PRIME){ flowCmd=flowAt(0.55); if (tState>0.25) setState(S.COARSE); }
+  else if (st===S.COARSE){
+    vcmd += flowReal*dt;
+    if (hTrue>6 && pwm>=0.3) samples.push([Math.max(vcmd-flowReal*0.35,0), hMeas]);
+    if (vcmd >= 0.85*preset){ refit(); flowCmd=flowAt(0.34); setState(S.FINE); log("→ FINE: ánh xạ ml→mm học được, đích "+target_mm.toFixed(1)+" mm ("+samples.length+" mẫu)"); }
+    else { const need=preset-vcmd-4; flowCmd=flowAt(pwmFor(Math.max(need/0.6, flowAt(0.3)))); }
+    if (hMeas>target_mm+8 || hMeas>cup.h-3){ flowCmd=0; setState(S.SETTLING); }
+  }
+  else if (st===S.FINE){
+    vcmd += flowReal*dt;
+    if (hTrue>6 && pwm>=0.3) samples.push([Math.max(vcmd-flowReal*0.35,0), hMeas]);
+    refit();
+    if (hMeas>cup.h-3){ flowCmd=0; setState(S.SETTLING); log("⚠ CUP_FULL"); }
+    else {
+      const lead = flowAt(0.34)*(0.7*P.lag+0.1+P.latency)/area(target_mm)*1000;
+      if (hMeas >= target_mm-lead){ flowCmd=0; setState(S.SETTLING); log("→ SETTLING: ngắt bơm sớm "+lead.toFixed(1)+" mm bù trễ"); }
+      else flowCmd=flowAt(0.34);
+    }
+  }
+  else if (st===S.SETTLING){
+    flowCmd=0;
+    if (tState<1.0) return;
+    const err=hMeas-target_mm;
+    if (err>5){ setState(S.FAULT); log("❌ FAULT OVERFILL +"+err.toFixed(1)+" mm"); return; }
+    if (err<-1 && pulses<5){ pulses++; topupT=Math.min(2,Math.max(Math.abs(err)*area(target_mm)/1000,0.8))/flowAt(0.3); flowCmd=flowAt(0.3); setState(S.TOPUP); }
+    else { setState(S.DONE); lastErr=volOf(hTrue)-preset;
+      log("✅ DONE: "+volOf(hTrue).toFixed(1)+" ml (sai "+(lastErr>=0?"+":"")+lastErr.toFixed(1)+" ml) sau "+elapsed.toFixed(1)+"s, "+pulses+" xung bù"); }
+  }
+  else if (st===S.TOPUP){ if (tState>=topupT){ flowCmd=0; setState(S.SETTLING);} }
+  else if (st===S.FAULT){ flowCmd=0; }
+  pwm = flowCmd>0 ? pwmFor(flowCmd) : 0;
+  if (elapsed>60 && st<S.DONE){ setState(S.FAULT); log("❌ TIMEOUT"); }
+}
+
+// ============================ VẼ =========================================
+const cv=document.getElementById("cv"), g=cv.getContext("2d");
+const SC=3.2, CX=210, CY=300;                      // px per mm, tâm quang học
+const px=(x,y)=>[CX+x*SC, CY-y*SC];
+function draw(){
+  g.clearRect(0,0,cv.width,cv.height);
+  g.fillStyle="#11151a"; g.fillRect(0,0,cv.width,cv.height);
+  // dải đèn nền
+  const [sx0]=px(-(cup.r1+12),0), [sx1]=px(cup.r1+12,0);
+  g.fillStyle="#cfd6da"; g.fillRect(sx0,0,sx1-sx0,cv.height);
+  if (!cupPresent){
+    g.fillStyle="#11151a"; g.font="15px system-ui"; g.textAlign="center";
+    g.fillText("Đặt cốc vào khay rồi bấm “Đặt cốc & rót”", CX, CY);
+    g.textAlign="left";
+    return;
+  }
+  const yB=cup.h*0.5, yT=yB-cup.h;                 // đáy/miệng (mm, tâm camera giữa cốc)
+  // thân cốc: tối trên nền sáng; phần nước tối hơn
+  const wB=cup.r0*SC, wT=cup.r1*SC;
+  const [,ryB]=px(0,yB), [,ryT]=px(0,yT);
+  const hW = hTrue, [,ryW]=px(0,yB-hW);
+  g.beginPath(); g.moveTo(CX-wT,ryT); g.lineTo(CX+wT,ryT); g.lineTo(CX+wB,ryB); g.lineTo(CX-wB,ryB); g.closePath();
+  g.fillStyle="rgba(35,40,45,0.82)"; g.fill();
+  if (hW>0.3){
+    const rw=(cup.r0+(cup.r1-cup.r0)*(hW/cup.h))*SC;
+    g.beginPath(); g.moveTo(CX-rw,ryW); g.lineTo(CX+rw,ryW); g.lineTo(CX+wB,ryB); g.lineTo(CX-wB,ryB); g.closePath();
+    g.fillStyle="rgba(8,10,12,0.94)"; g.fill();
+    // vạch nước sáng
+    g.strokeStyle="#bfe8df"; g.lineWidth=2; g.beginPath(); g.moveTo(CX-rw,ryW); g.lineTo(CX+rw,ryW); g.stroke();
+  }
+  // dòng nước rót
+  if (flowReal>1){
+    g.strokeStyle="rgba(220,235,235,0.9)"; g.lineWidth=2+3*(flowReal/P.flowMax);
+    g.beginPath(); g.moveTo(CX+6*SC, 20); g.lineTo(CX+6*SC, ryW||ryB); g.stroke();
+  }
+  // overlay "thị giác": vạch đo (nhiễu) + đích
+  const [,my]=px(0,yB-hMeas);
+  g.strokeStyle="#2a9d8f"; g.lineWidth=2; g.setLineDash([]);
+  g.beginPath(); g.moveTo(CX-wT-14,my); g.lineTo(CX+wT+14,my); g.stroke();
+  if (target_mm>0){
+    const [,ty]=px(0,yB-target_mm);
+    g.strokeStyle="#e76f51"; g.setLineDash([7,5]); g.lineWidth=2;
+    g.beginPath(); g.moveTo(CX-wT-14,ty); g.lineTo(CX+wT+14,ty); g.stroke(); g.setLineDash([]);
+  }
+  g.fillStyle="#11151a"; g.font="12px system-ui";
+  g.fillText("vạch đo (vision)", CX+wT+18, my+4);
+  if (target_mm>0) g.fillText("đích", CX+wT+18, px(0,yB-target_mm)[1]+4);
+}
+
+// ============================ UI =========================================
+const PRESETS=[100,150,200,250,300];
+const pbox=document.getElementById("presets");
+PRESETS.forEach(p=>{
+  const b=document.createElement("button"); b.className="preset"+(p===preset?" on":""); b.textContent=p+" ml";
+  b.onclick=()=>{ preset=p; [...pbox.children].forEach(x=>x.classList.remove("on")); b.classList.add("on"); };
+  pbox.appendChild(b);
+});
+CUPS.forEach((c,i)=>{
+  const b=document.createElement("button"); b.textContent="🥤 "+c.name;
+  b.onclick=()=>{ cup=c; cupPresent=false; st=S.IDLE; hTrue=0; log("Đổi cốc: "+c.name); };
+  pbox.appendChild(b);
+});
+document.getElementById("start").onclick=()=>{
+  cupPresent=true; stable=0; hTrue=0; vcmd=0; samples=[]; fit=null; pulses=0; elapsed=0; lastErr=null; measBuf=[];
+  setState(S.CHECK); log("— Đặt cốc, bắt đầu mẻ rót "+preset+" ml —");
+};
+document.getElementById("remove").onclick=()=>{ cupPresent=false; setState(S.IDLE); flowCmd=0; hTrue=0; log("Lấy cốc ra."); };
+document.getElementById("stop").onclick=()=>{ setState(S.IDLE); flowCmd=0; log("Dừng khẩn."); };
+for (const [id,key,fmt] of [["lag","lag",v=>v.toFixed(2)],["noise","noise",v=>v.toFixed(1)],["flow","flowMax",v=>v.toFixed(0)]]){
+  const el=document.getElementById(id);
+  el.oninput=()=>{ P[key]=parseFloat(el.value); document.getElementById("v"+id[0].toUpperCase()+id.slice(1)).textContent=fmt(P[key]); };
+}
+
+let last=performance.now();
+function frame(now){
+  const dt=Math.min((now-last)/1000,0.05); last=now;
+  // chạy điều khiển 15 Hz
+  tick(dt);
+  draw();
+  const stEl=document.querySelector("#kState .state")||document.querySelector("#kState");
+  stEl.className="state "+SNAME[st]; stEl.textContent=SNAME[st];
+  document.getElementById("kH").textContent=hMeas.toFixed(1);
+  document.getElementById("kT").textContent=target_mm?target_mm.toFixed(1):"0";
+  document.getElementById("kV").textContent=volOf(hTrue).toFixed(0);
+  document.getElementById("kE").textContent = lastErr===null?"—":(lastErr>=0?"+":"")+lastErr.toFixed(1)+" ml";
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

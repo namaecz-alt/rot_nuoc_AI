@@ -1,0 +1,4 @@
+# Máy tính Windows / macOS / Linux. Cài Python 3.10–3.13.
+numpy>=1.24
+opencv-python>=4.8
+ultralytics>=8.3

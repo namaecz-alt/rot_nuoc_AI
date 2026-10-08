@@ -1,0 +1,20 @@
+# ===== Bắt buộc =====
+numpy>=1.24
+opencv-python>=4.8          # trên Raspberry Pi OS: sudo apt install python3-opencv
+
+# ===== Tuỳ chọn: giao diện web =====
+flask>=3.0
+
+# ===== Tuỳ chọn: chỉ có trên Raspberry Pi =====
+# Cài khi chạy trên Pi thật:
+#   pip install rpi.gpio            (hoặc gpiozero)
+#   sudo apt install python3-picamera2   (nếu dùng Camera Module 3 / CSI)
+rpi.gpio ; platform_machine == "aarch64"
+picamera2 ; platform_machine == "aarch64"
+
+# ===== Tuỳ chọn: chạy bộ tự kiểm chứng (tools/test_pipeline.py) =====
+matplotlib>=3.7
+scipy>=1.10
+
+# ===== Tuỳ chọn: nhận diện YOLO trên PC (cần PyTorch; cài riêng nếu chạy run_pc.py) =====
+# pip install -r requirements_pc.txt

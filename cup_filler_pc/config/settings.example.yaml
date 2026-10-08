@@ -1,0 +1,96 @@
+# =====================================================================
+#  CẤU HÌNH MÁY RÓT NƯỚC TỰ ĐỘNG - nhận diện cốc trong + điều khiển mức
+#  Copy file này thành config.yaml rồi chỉnh theo máy của bạn.
+#  File được nạp bằng PyYAML; nếu Pi không có PyYAML thì trình nạp sẽ
+#  tự fallback sang JSON (đổi đuôi thành settings.json với cùng nội dung).
+# =====================================================================
+
+camera:
+  backend: "v4l2"            # v4l2 | picamera2 | video | synthetic
+  device: 0                  # /dev/video0
+  width: 640
+  height: 480
+  fps: 30
+  # Nếu dùng file video / ảnh để chạy thử offline:
+  source_file: "samples/cup.mp4"
+
+calibration:
+  mm_per_px: 0.417           # (1 / px_per_mm). Chạy tools/calibrate.py để đo
+  # Toạ độ pixel của tâm quang học (nơi y = 0 mm). Mặc định = tâm ảnh.
+  optical_center_px: [320.0, 240.0]
+  # Bù sai số do camera không nằm ngang mặt nước (lệch thị giác - parallax)
+  # và do mặt khum (meniscus). Đơn vị mm, dấu + = số đo bị CAO hơn thực tế.
+  # Cách đo: rót tay tới vạch 100 ml, đọc số máy đo -> offset = máy đo - thật.
+  meniscus_offset_mm: 0.0
+  camera_offset_mm: 0.0      # c: mặt phẳng cảm biến nằm TRÊN (+) mặt nước bao nhiêu mm
+  # Bù sai số do dòng nước đang bay trong không khí khi bơm ngắt.
+  in_flight_ml: 4.0
+
+detection:
+  # ---- Vùng quan tâm (ROI) để tìm cốc. Đặt hẹp để tăng tốc trên Pi. ----
+  # [x, y, w, h] tính bằng pixel. null = dùng cả ảnh.
+  cup_roi: null
+
+  # ---- Nền sáng phía sau cốc (bắt buộc để nhìn được cốc thuỷ tinh) ----
+  strip:
+    auto_find: true          # tự dò cột sáng; false thì dùng toạ độ bên dưới
+    x_range: [40, 600]      # dải cột ảnh có thể chứa nền sáng
+    min_brightness: 150      # ngưỡng xám của nền sáng
+    min_width_px: 40         # dải sáng phải rộng tối thiểu bao nhiêu px
+    max_width_px: 480
+
+  cup:
+    min_width_px: 28         # cốc hẹp hơn số này = coi như không có cốc
+    max_width_px: 260
+    min_height_px: 45
+    max_height_px: 420
+    min_fill_ratio: 0.35     # tỉ lệ pixel "vùng tối" / hộp bao, chống nhiễu
+
+  waterline:
+    grad_threshold: 14       # ngưỡng biên độ gradient dọc của vạch nước
+    min_support_ratio: 0.45  # vạch nước phải chạy qua ít nhất 45% số cột trong lòng cốc
+    search_margin_ratio: 0.92  # bỏ qua 8% sát miệng cốc (chỗ hay có phản quang)
+    ransac_thresh_px: 2.5
+    temporal_window: 5       # trung vị N khung hình để lọc bọt/sóng
+
+control:
+  presets_ml: [100, 150, 200, 250, 300]
+  default_preset_ml: 200
+
+  pump:
+    type: "gpio"             # gpio | sim | manual
+    pin: 18                  # BCM18
+    active_low: false        # true nếu dùng module relay kích mức thấp
+    voltage: 12
+    # Lưu lượng đã hiệu chuẩn (ml/s) ở các mức công suất PWM 0..1
+    flow_curve:
+      pwm: [0.35, 0.5, 0.7, 0.85, 1.0]
+      ml_per_s: [8.0, 16.0, 27.0, 34.0, 40.0]
+    lag_s: 0.45              # hằng số thời gian bơm + ống (chậm pha)
+    min_pwm: 0.30            # dưới mức này bơm không thắng được áp cột nước
+    max_pwm: 1.0
+
+  loop:
+    fps: 15                  # tần suất vòng điều khiển trên Pi 4 (10-20 là đủ)
+    settle_s: 1.00           # thời gian chờ mặt nước phẳng lại trước khi đọc
+    coarse_margin_ratio: 0.85  # pha 1 bơm tới 85% thể tích, pha 2 vision tinh chỉnh
+    fine_band_mm: 8.0        # trong dải ±8 mm quanh đích: chạy PWM nhỏ
+    fine_pwm: 0.34
+    topup_pulse_ml: 2.0      # mỗi nhịp bù
+    topup_max_pulses: 5
+    max_overfill_mm: 5.0     # vượt đích quá số này -> báo lỗi OVERFILL
+    timeout_s: 45            # an toàn: quá thời gian này -> ngắt bơm
+
+safety:
+  max_volume_ml: 450         # tuyệt đối không rót quá
+  require_cup: true          # không có cốc thì không bơm
+  cup_stable_frames: 4       # cốc phải đứng yên N khung hình liên tiếp
+  no_cup_grace_s: 1.5        # mất cốc giữa chừng > 1.5 s -> dừng hẳn
+
+logging:
+  level: "INFO"
+  file: "logs/run.log"
+
+web:
+  host: "0.0.0.0"
+  port: 8080
