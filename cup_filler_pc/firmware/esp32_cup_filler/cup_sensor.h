@@ -70,6 +70,11 @@ class CupSensor {
 
   bool present() const { return _present; }
   bool valid() const { return _distance > 5.0f; }
+  // Mẫu ĐO GẦN NHẤT có đọc được không (echo có dội về không). Khác `valid()`: valid()
+  // vẫn true nhờ giá trị cũ khi cảm biến bắt đầu hụt liên tục.
+  bool sampleValid() const { return _valid; }
+  // Số MẪU liên tiếp không đọc được (0 = tốt). Đếm theo mẫu chứ không theo vòng loop.
+  uint8_t badStreak() const { return _badStreak; }
 
   // Lấy sự kiện thay đổi trạng thái (đặt vào / nhấc ra). true nếu có sự kiện.
   bool takeEvent(bool &nowPresent) {
@@ -95,17 +100,20 @@ class CupSensor {
         _height = _baseline - _distance;
         _rawPresent = (_height >= CUP_MIN_HEIGHT_MM);
         _valid = true;
+        _badStreak = 0;
       } else {
         // không đọc được / quá xa: coi như khay trống nhưng KHÔNG xoá baseline
         _valid = false;
         _rawPresent = false;
         _height = 0.0f;
+        if (_badStreak < 255) _badStreak++;         // hụt liên tiếp -> có thể là LỖI cảm biến
       }
     }
 #else
     _rawPresent = (digitalRead(PIN_CUP_DIGITAL) == LOW);
     _height = _rawPresent ? 80.0f : 0.0f;      // cảm biến số không đo được chiều cao
     _valid = true;
+    _badStreak = 0;
 #endif
     // chống dội: trạng thái phải giữ nguyên đủ lâu mới được công nhận
     uint32_t need = _rawPresent ? CUP_DEBOUNCE_MS : CUP_MISSING_MS;
@@ -155,6 +163,7 @@ class CupSensor {
   float _median[CUP_MEDIAN_N] = {0, 0, 0};
   uint8_t _samples = 0;
   uint8_t _w = 0;                     // ô ghi kế tiếp trong vòng đệm trung vị
+  uint8_t _badStreak = 0;             // số mẫu liên tiếp không đọc được
   float _baseline = CUP_BASELINE_MM;
   float _distance = 0.0f;
   float _height = 0.0f;

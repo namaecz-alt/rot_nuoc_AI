@@ -45,7 +45,7 @@ pip install -r requirements_pc.txt                    # đã thêm pyserial
 python3 tools/esp_cli.py --port sim --demo            # kịch bản: đặt cốc → xác nhận → bấm nút → rót 200 ml
 python3 tools/run_pc.py --port sim --synthetic --demo  # cả hệ thống, 10 bước, không cần màn hình
 python3 tools/web.py --port sim                         # web UI chế độ ESP32 (mở trình duyệt, tự chạy)
-python3 tools/test_comms.py                           # 141 bài tự kiểm chứng (giao thức, C++, luồng, firmware chạy thật trên PC, web)
+python3 tools/test_comms.py                           # 148 bài tự kiểm chứng (giao thức, C++, luồng, firmware chạy thật trên PC, web)
 ```
 
 **Xem/điều khiển từ điện thoại hoặc máy tính (chế độ ESP32):**
@@ -173,7 +173,7 @@ cup_filler/
 │   ├── esp_cli.py             # bảng điều khiển ESP32 (thật/giả lập): status, ok, tare, watch
 │   └── web.py                 # giao diện web (--port sim|COM5 để chạy chế độ ESP32)
 │   ├── gen_protocol_vectors.py# sinh lại vector vàng sau khi sửa giao thức
-│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (141 bài, không cần phần cứng)
+│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (148 bài, không cần phần cứng)
 ├── firmware/                  # FIRMWARE ESP32 (Arduino)
 │   ├── esp32_cup_filler/      # config.h (sửa theo máy bạn), protocol.h, .ino, các driver
 │   └── host_test/             # test_protocol.cpp + vector vàng, test_firmware_run.cpp

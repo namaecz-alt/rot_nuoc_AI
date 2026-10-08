@@ -238,9 +238,10 @@ Luồng tự động (`cupfiller/session.py`):
 | Rót quá `MAX_FILL_ML` | ngắt relay, gửi `FILL_DONE` mã `OVER_VOLUME` |
 | Rót quá `POUR_TIMEOUT_MS` | ngắt relay, mã `TIMEOUT` |
 | Nhấc cốc giữa chừng | ngắt relay ngay, mã `CUP_REMOVED` |
+| Cảm biến siêu âm hụt `CUP_FAULT_SAMPLES` mẫu liên tiếp (tuột dây/hỏng) | ngắt relay, mã `SENSOR_FAULT`, gửi `ERROR` + vào trạng thái LỖI |
 | Mất UART với PC quá `LINK_TIMEOUT_MS` | ngắt relay, mã `LINK_LOST` |
 | Giữ nút ≥ 2 s | DỪNG KHẨN CẤP (ngắt ngay khi đang giữ) |
-| PC không trả lời `CUP_OK` | báo lỗi; nút/mic **vẫn khoá** (không rót nước khi chưa xác nhận cốc) |
+| PC không trả lời `CUP_OK` sau `WAIT_PC_TIMEOUT_MS` | gửi `ERROR` `PC_khong_tra_loi_CUP_OK`; nút/mic **vẫn khoá** (không rót nước khi chưa xác nhận cốc). Gửi `CMD: RESET_STATE` để xoá lỗi |
 
 Relay **tích cực mức CAO** (`RELAY_ACTIVE_HIGH 1`) đúng như yêu cầu thiết kế; nút bấm **tích cực
 mức THẤP** với `INPUT_PULLUP` — nhấn là chạm GND, không cần điện trở ngoài.
@@ -253,7 +254,7 @@ Bộ kiểm tra trên PC đối chiếu **từng byte** giữa C++ trong firmwar
 các kịch bản (khoá nút → CUP_OK → bơm → nhấc cốc → ngắt bơm):
 
 ```bash
-python3 tools/test_comms.py                 # toàn bộ (141 bài)
+python3 tools/test_comms.py                 # toàn bộ (148 bài)
 python3 tools/test_comms.py --only firmware # chỉ phần config/sketch
 python3 tools/test_comms.py --only fwrun    # CHẠY THẬT firmware trên PC (máy ảo mini)
 ```

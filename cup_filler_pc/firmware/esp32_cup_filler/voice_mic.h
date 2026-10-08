@@ -60,6 +60,7 @@ class VoiceEngine {
     _tLastLoud = 0;
     _loudFrames = 0;
     _inBurst = false;
+    _burstCounted = false;
     _tLastBurstEnd = 0;
   }
 
@@ -160,6 +161,7 @@ class VoiceEngine {
     _nPeaks = 0;
     _chunkFill = 0;
     _inBurst = false;
+    _burstCounted = false;
     _tLastBurstEnd = 0;
     _lastRms = 0;
     _startFlag = 1;
@@ -169,7 +171,11 @@ class VoiceEngine {
     _active = false;
     _loudFrames = 0;
     _lastDurMs = (uint16_t)min((uint32_t)60000, nowMs - _tSegmentStart);
+    // Luôn gửi gói mang cờ END. Nếu số mẫu của đoạn chia hết cho MIC_CHUNK_SAMPLES thì
+    // đệm vừa khít (không còn mẫu dư) -> phải gửi thêm gói PCM RỖNG, nếu không PC sẽ
+    // không bao giờ biết đoạn nói đã kết thúc (đợi mãi, bỏ luôn lệnh bằng giọng nói).
     if (_chunkFill > 0) _flushChunk(2);            // 2 = cờ END
+    else                _flushEndMarker();
     if (_segCb != NULL) _segCb(_nPeaks, _lastRms, _lastDurMs, _user);
   }
 
@@ -179,19 +185,22 @@ class VoiceEngine {
     const uint32_t minBurst = 60, minGap = 120;
     if (!_inBurst) {
       if (rms >= VAD_ON_RMS) {
+        _inBurst = true;
+        _tBurstStart = nowMs;
         if (_tLastBurstEnd == 0 || (nowMs - _tLastBurstEnd) >= minGap) {
           _nPeaks++;
-          _inBurst = true;
-          _tBurstStart = nowMs;
+          _burstCounted = true;                     // tiếng mới, có tính vào bộ đếm
         } else {
-          _inBurst = true;                          // gộp vào tiếng trước
-          _tBurstStart = nowMs;
+          _burstCounted = false;                    // quá sát tiếng trước -> gộp, KHÔNG tính
         }
       }
     } else {
       if (rms < VAD_OFF_RMS) {
         _inBurst = false;
-        if ((nowMs - _tBurstStart) < minBurst) _nPeaks--;   // quá ngắn -> bỏ
+        // Chỉ trừ khi tiếng này ĐÃ được tính. Nếu trừ cả tiếng gộp (không tính) thì
+        // _nPeaks (uint16_t) bị tràn xuống 65535 -> PC nhận "65535 tiếng".
+        if (_burstCounted && _nPeaks > 0 && (nowMs - _tBurstStart) < minBurst) _nPeaks--;
+        _burstCounted = false;
         _tLastBurstEnd = nowMs;
       }
     }
@@ -208,6 +217,19 @@ class VoiceEngine {
     (void)block;
     (void)n;
 #endif
+  }
+
+  // Gói PCM rỗng chỉ mang cờ KẾT THÚC đoạn nói (n = 0)
+  void _flushEndMarker() {
+    if (_chunkCb == NULL) {
+      _startFlag = 0;
+      return;
+    }
+    uint32_t rc = _rateHz / 2000;                    // 4 bit: 0..15 (0 = PC dùng mặc định)
+    if (rc > 15) rc = 15;
+    uint8_t flags = (uint8_t)(2 | (uint8_t)(rc << 4));   // 2 = END, không có START
+    _chunkCb(_chunk, 0, flags, _user);
+    _startFlag = 0;
   }
 
   void _flushChunk(uint8_t endFlag) {
@@ -281,6 +303,7 @@ class VoiceEngine {
   uint32_t _tBurstStart = 0;
   uint32_t _tLastBurstEnd = 0;
   bool _inBurst = false;
+  bool _burstCounted = false;         // tiếng đang xét đã được cộng vào _nPeaks chưa
   uint8_t _loudFrames = 0;
 };
 

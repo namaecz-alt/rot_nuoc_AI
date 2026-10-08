@@ -257,9 +257,13 @@ class PeakCounter:
                 run += 1
             else:
                 if v < thr_off and run > 0:
-                    if run >= min_burst_fr and (i - run - last_end) >= min_gap_fr:
+                    counted = run >= min_burst_fr and (i - run - last_end) >= min_gap_fr
+                    if counted:
                         peaks += 1
-                        last_end = i
+                    # Chốt mốc kết thúc cho MỌI tiếng, kể cả tiếng bị gộp/quá ngắn.
+                    # Nếu chỉ chốt khi đếm được thì các tiếng bị gộp sẽ cộng dồn khoảng
+                    # cách và tiếng sau bị đếm nhầm thành tiếng mới (PC đếm nhiều hơn ESP).
+                    last_end = i
                     run = 0
         if run >= min_burst_fr:
             peaks += 1

@@ -771,17 +771,56 @@ def test_fwrun() -> None:
     # ---- mic: PCM thật của firmware -> chính VoiceRecognizer của PC nhận dạng ----
     audio = by.get("AUDIO_CHUNK", [])
     check(len(audio) > 20, "mic đẩy PCM lên PC qua gói AUDIO_CHUNK", "%d gói" % len(audio))
-    if audio:
-        vr = VoiceRecognizer(presets=(100, 150, 200, 250, 300))
-        for d in audio:
-            vr.feed(d)
-        res = vr.analyze()
-        check(res.ok and res.index == 2,
-              "PC nhận dạng PCM của firmware: 3 tiếng -> mức 200 ml",
-              "%s (tần số ESP báo: %s Hz)" % (res.text or res.reason, audio[0].get("rate_hz")))
+    # Tách PCM thành từng đoạn nói theo cờ START/END rồi cho PC nhận dạng từng đoạn
+    # (đúng cách esp_bridge.py làm: mỗi đoạn nói là một lần analyze()).
+    segs, cur = [], None
+    for d in audio:
+        if d.get("start"):
+            cur = []
+        if cur is not None:
+            cur.append(d)
+            if d.get("end"):
+                segs.append(cur)
+                cur = None
     ve = by.get("VOICE_EVENT", [])
+    check(len(ve) > 0 and len(segs) == len(ve),
+          "mỗi đoạn nói đều có gói PCM mở đầu (START) và kết thúc (END)",
+          "%d đoạn PCM / %d VOICE_EVENT" % (len(segs), len(ve)))
+
+    def pc_nghe(seg):
+        """Cho VoiceRecognizer của PC nghe một đoạn nói -> (số tiếng, mức nước)."""
+        vr = VoiceRecognizer(presets=(100, 150, 200, 250, 300))
+        for d in seg:
+            vr.feed(d)
+        r = vr.analyze()
+        return r.n_peaks, r.ml, r.text
+
+    if segs:
+        n1, ml1, txt1 = pc_nghe(segs[0])
+        check(n1 == 3 and ml1 == 200,
+              "PC nhận dạng PCM của firmware: 3 tiếng -> mức 200 ml",
+              "%s (tần số ESP báo: %s Hz)" % (txt1 or "?", audio[0].get("rate_hz")))
+    if len(segs) >= 2:
+        n2, _, txt2 = pc_nghe(segs[1])
+        check(n2 <= 5, "2 tiếng quá ngắn & sát nhau: PC cũng KHÔNG sinh tiếng ảo", txt2)
+    if len(segs) >= 3:
+        n3, ml3, txt3 = pc_nghe(segs[2])
+        check(n3 == 1 and ml3 == 100, "3 tiếng quá sát nhau -> PC gộp thành 1 tiếng (mức 100 ml)",
+              txt3)
+        if ve:
+            check(n3 == ve[-1]["n_peaks"],
+                  "PC và ESP đếm tiếng GIỐNG NHAU (cùng một đoạn PCM)",
+                  "PC %d tiếng / ESP %d tiếng" % (n3, ve[-1]["n_peaks"]))
+
     check(ve and ve[0]["n_peaks"] == 3, "firmware đếm đúng 3 tiếng trong đoạn nói",
           str(ve[0]) if ve else "không có VOICE_EVENT")
+    check(ve and all(0 <= d["n_peaks"] <= 5 for d in ve),
+          "bộ đếm tiếng trên ESP không bao giờ tràn (2 tiếng quá ngắn không thành 65535)",
+          "các giá trị: %s" % [d["n_peaks"] for d in ve])
+    check(int(P.StopReason.SENSOR_FAULT) in reasons,
+          "mất cảm biến siêu âm -> FILL_DONE mã 'lỗi cảm biến'")
+    check(any(d["reason"] == int(P.StopReason.SENSOR_FAULT) for d in cr),
+          "CUP_REMOVED do tuột dây cảm biến ghi đúng mã 'lỗi cảm biến' (không phải 'nhấc cốc')")
 
     # ---- gói PC->ESP do bài test C++ sinh ra phải khớp bộ mã hoá của Python ----
     # Mỗi gói được giải mã rồi MÃ HOÁ LẠI bằng protocol.py; hai bộ mã hoá (C++ và Python)

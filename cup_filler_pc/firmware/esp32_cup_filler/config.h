@@ -72,6 +72,8 @@ static const uint16_t PRESET_ML[N_BUTTONS] = {100, 150, 200, 250, 300};
 #define CUP_DEBOUNCE_MS    300        // phải ổn định bấy lâu mới báo "đã đặt cốc"
 #define CUP_MISSING_MS     250        // mất cốc bấy lâu -> báo "đã nhấc cốc"
 #define CUP_SAMPLE_MS      60         // chu kỳ lấy mẫu cảm biến
+#define CUP_FAULT_SAMPLES  5          // số mẫu LIÊN TIẾP không đọc được (tuột dây, hỏng
+                                      // HC-SR04) -> báo LỖI CẢM BIẾN và ngắt bơm
 #define CUP_MEDIAN_N       3          // lọc trung vị N mẫu
 
 // ---------------------------------------------------------------------------

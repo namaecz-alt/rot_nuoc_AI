@@ -100,6 +100,23 @@ static void dump_tx() {
   fflush(stdout);
 }
 
+// In TX ra (như dump_tx) rồi đếm số khung hợp lệ -> phát hiện gửi trùng/lũ gói
+static int dump_tx_count() {
+  std::string out = stub_uart_take();
+  if (!out.empty()) printf("TX %s\n", hex(out).c_str());
+  fflush(stdout);
+  proto::Decoder dec;
+  proto::Frame f;
+  int n = 0;
+  for (size_t i = 0; i < out.size(); i++) {
+    if (dec.push((uint8_t)out[i])) {
+      while (dec.pop(f)) n++;
+    }
+  }
+  while (dec.pop(f)) n++;
+  return n;
+}
+
 static void send_pc(const std::string &frame) {
   printf("PC %s\n", hex(frame).c_str());
   stub_uart_inject(frame);
@@ -348,12 +365,85 @@ int main() {
   check(!relay_on(), "giữ nút 2 s -> dừng khẩn cấp, relay tắt");
   check(g_pump.pouredMl() < 150.0f, "dừng khẩn cấp ngắt trước khi rót đủ 250 ml");
 
+  // ----------------------------------------------------------------- [9b]
+  mark("loi-cam-bien-sieu-am");
+  if (!g_cup.present()) place_cup(95.0f);        // đảm bảo có cốc trên khay
+  send_pc(pc_set_params(0xFFFF, 500, 60));
+  run_ms(200);
+  send_pc(pc_cup_ok(33.0f, 30.0f, 95.0f, 316));  // mở khoá để rót
+  run_ms(200);
+  press_button(2, 120);                           // nút 3 = 200 ml
+  run_ms(800);
+  check(relay_on(), "đang rót 200 ml (chuẩn bị thử lỗi cảm biến)");
+  stub_set_echo_ok(false);                       // tuột dây / hỏng HC-SR04
+  run_ms(CUP_SAMPLE_MS + 20);                    // hụt đúng 1 mẫu
+  check(relay_on(), "cảm biến HỤT 1 MẪU -> chưa ngắt bơm (tha lỗi tạm thời)");
+  stub_set_echo_ok(true);                        // dây lại tiếp xúc
+  run_ms(CUP_SAMPLE_MS * 2);
+  check(relay_on(), "hụt 1 mẫu rồi hồi phục -> vẫn đang rót bình thường");
+  stub_set_echo_ok(false);                       // hỏng hẳn
+  run_ms(CUP_SAMPLE_MS * (CUP_FAULT_SAMPLES + 3));
+  dump_tx();
+  check(!relay_on(), "mất cảm biến liên tiếp -> NGẮT BƠM ngay");
+  check(g_state == proto::ST_FAULT, "firmware chuyển sang trạng thái LỖI (FAULT)");
+  check(strstr(g_lastError, "LOI_CAM_BIEN") != NULL,
+        std::string("firmware ghi nhận mã lỗi cảm biến (") + g_lastError + ")");
+
+  mark("hoi-phuc-sau-loi");
+  stub_set_echo_ok(true);                        // cắm lại dây
+  run_ms(300);
+  send_pc(pc_cmd(proto::CMD_RESET_STATE));
+  run_ms(600);
+  dump_tx();
+  check(g_state != proto::ST_FAULT, "PC gửi CMD_RESET_STATE -> ESP thoát trạng thái LỖI");
+  place_cup(95.0f);                              // cốc vẫn còn trên khay -> nhận ra lại
+  send_pc(pc_cup_ok(33.0f, 30.0f, 95.0f, 316));
+  run_ms(300);
+  press_button(0, 120);                          // nút 1 = 100 ml
+  run_ms(300);
+  check(relay_on(), "sau khi xử lý lỗi: bấm nút -> bơm chạy lại bình thường");
+  t0 = millis();
+  while (g_state == proto::ST_POURING && (millis() - t0) < 10000) run_ms(50);
+  dump_tx();
+  check(g_pump.pouredMl() >= 90.0f && g_pump.pouredMl() <= 112.0f,
+        "sau khi xử lý lỗi: rót đúng 100 ml (thực tế " +
+            std::to_string((int)(g_pump.pouredMl() + 0.5f)) + " ml)");
+
+  // ----------------------------------------------------------------- [9c]
+  mark("cho-pc-xac-nhan-dung-han");
+  // Lỗi cũ: mốc thời gian lấy bằng millis() muộn hơn `now` của vòng loop -> phép trừ
+  // tràn số vô dấu -> vừa đặt cốc đã báo "PC không trả lời CUP_OK" và gửi gói lũ.
+  remove_cup();                                  // nhấc cốc cũ ra
+  run_ms(300);
+  place_cup(95.0f);                              // đặt cốc mới, lần này PC IM LẶNG
+  run_ms(1000);
+  int n_frames = dump_tx_count();                // 1 giây: chỉ vài gói định kỳ
+  check(g_state == proto::ST_WAIT_PC, "đặt cốc xong: ESP ở trạng thái CHỜ PC xác nhận");
+  check(g_lastError[0] == 0, std::string("chưa hết hạn chờ PC thì chưa báo lỗi (lỗi: '") +
+        g_lastError + "')");
+  check(n_frames <= 12, "1 giây chỉ gửi vài gói định kỳ, KHÔNG gửi lũ gói (thực tế " +
+        std::to_string(n_frames) + " gói)");
+  run_ms(WAIT_PC_TIMEOUT_MS - 2000);             // gần 15 s: vẫn chưa được hết hạn
+  check(g_lastError[0] == 0, "chờ 13 s vẫn chưa báo lỗi (hạn là " +
+        std::to_string(WAIT_PC_TIMEOUT_MS / 1000) + " s)");
+  run_ms(3000);                                  // vượt hạn 15 s
+  dump_tx();
+  check(strcmp(g_lastError, "PC_khong_tra_loi_CUP_OK") == 0,
+        std::string("quá ") + std::to_string(WAIT_PC_TIMEOUT_MS / 1000) +
+        " s không có CUP_OK -> báo lỗi đúng lúc (lỗi: '" + g_lastError + "')");
+  check(g_state == proto::ST_FAULT || g_state == proto::ST_MANUAL,
+        "quá hạn chờ PC -> chuyển sang trạng thái an toàn (LỖI hoặc dự phòng)");
+
+  send_pc(pc_cup_ok(33.0f, 30.0f, 95.0f, 316));  // PC trả lời muộn -> dùng lại được
+  run_ms(300);
+
   // ----------------------------------------------------------------- [10]
   mark("lenh-tu-pc");
   send_pc(pc_ping());
   run_ms(200);
   send_pc(pc_set_preset(3, 250));
   run_ms(150);
+  remove_cup();                                  // TARE chỉ đúng khi khay TRỐNG
   send_pc(pc_cmd(proto::CMD_TARE));
   run_ms(400);
   send_pc(pc_cmd(proto::CMD_DISARM));
@@ -374,6 +464,23 @@ int main() {
   } else {
     check(true, "mic bị tắt trong config.h -> bỏ qua bài kiểm tra mic");
   }
+
+  // ---------------------------------------------------------------- [11b]
+  mark("mic-tieng-qua-ngan");
+  // 2 "tiếng" 50 ms cách nhau 70 ms: quá ngắn và quá sát -> phải BỊ BỎ, không được
+  // trừ nhầm vào bộ đếm (trước đây _nPeaks-- làm tràn uint16_t -> 65535 "tiếng").
+  stub_mic_bursts(2, 50000, 70000, 1400);
+  run_ms(2000);
+  dump_tx();
+  check(g_voice.lastPeaks() <= 5, "2 tiếng quá ngắn & sát nhau KHÔNG làm tràn bộ đếm tiếng ("
+        "thực tế " + std::to_string(g_voice.lastPeaks()) + " tiếng)");
+
+  // 3 "tiếng" 200 ms cách nhau 60 ms: quá sát nhau -> chỉ tính là MỘT tiếng
+  stub_mic_bursts(3, 200000, 60000, 1400);
+  run_ms(3000);
+  dump_tx();
+  check(g_voice.lastPeaks() == 1, "3 tiếng quá sát nhau -> gộp thành 1 tiếng (thực tế " +
+        std::to_string(g_voice.lastPeaks()) + " tiếng)");
 
   // ----------------------------------------------------------------- [12]
   mark("ket-thuc");

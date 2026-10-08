@@ -66,6 +66,12 @@ static uint32_t g_tLastProgress = 0;
 static uint32_t g_tWaitPc = 0;
 static uint32_t g_tLastCupRetry = 0;
 static uint32_t g_pulseEndMs = 0;       // PUMP_SET có duration_ms -> hết hạn thì tắt
+static bool g_sensorFault = false;      // đã báo LỖI CẢM BIẾN cho đợt lỗi này chưa
+// Mốc thời gian dùng CHUNG cho cả vòng loop. Nếu chỗ này lấy millis() còn chỗ kia lấy
+// millis() muộn hơn (trong một vòng loop có đọc ADC ~2 ms, chờ echo...) thì phép trừ
+// (now - mốc) bị tràn số vô dấu -> mọi bộ đếm thời gian "nổ" ngay lập tức
+// (STATUS/HELLO gửi liên tục, WAIT_PC hết hạn ngay khi vừa đặt cốc...).
+static uint32_t g_now = 0;
 
 // ---------------------------------------------------------------------------
 //  Gửi gói tin
@@ -93,11 +99,11 @@ static void sendHello() {
   proto::Writer w(g_tx, sizeof(g_tx));
   sendRaw(proto::encHello(w, nextSeq(), FW_VERSION_MAJOR, caps, PRESET_ML, N_BUTTONS,
                           (uint16_t)(g_pump.flow() * 10.0f)));
-  g_tLastHello = millis();
+  g_tLastHello = g_now;
 }
 
 static uint8_t statusFlags() {
-  uint32_t now = millis();
+  uint32_t now = g_now;
   uint8_t f = 0;
   if (g_cup.present()) f |= proto::FL_CUP_PRESENT;
   if (g_pcConfirmed) f |= proto::FL_PC_CONFIRMED;
@@ -113,8 +119,8 @@ static void sendStatus() {
   sendRaw(proto::encStatus(w, nextSeq(), g_state, statusFlags(),
                            (uint16_t)(g_pump.pouredMl() + 0.5f),
                            (uint16_t)(g_pump.targetMl() + 0.5f),
-                           (uint16_t)(g_pump.maxMl() + 0.5f), millis()));
-  g_tLastStatus = millis();
+                           (uint16_t)(g_pump.maxMl() + 0.5f), g_now));
+  g_tLastStatus = g_now;
 }
 
 static void sendProgress() {
@@ -124,7 +130,7 @@ static void sendProgress() {
   if (pct > 200) pct = 200;
   proto::Writer w(g_tx, sizeof(g_tx));
   sendRaw(proto::encFillProgress(w, nextSeq(), poured, (uint8_t)pct, target, g_state));
-  g_tLastProgress = millis();
+  g_tLastProgress = g_now;
 }
 
 static void sendCupPlaced(uint8_t flags) {
@@ -134,13 +140,13 @@ static void sendCupPlaced(uint8_t flags) {
   if (dist < 0) dist = 0;
   proto::Writer w(g_tx, sizeof(g_tx));
   sendRaw(proto::encCupPlaced(w, nextSeq(), (uint16_t)(dist + 0.5f), (uint16_t)(base + 0.5f),
-                              (uint16_t)(h + 0.5f), flags, millis()));
-  g_tLastCupRetry = millis();
+                              (uint16_t)(h + 0.5f), flags, g_now));
+  g_tLastCupRetry = g_now;
 }
 
-static void sendCupRemoved() {
+static void sendCupRemoved(uint8_t reason) {
   proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encCupRemoved(w, nextSeq(), proto::STOP_CUP_REMOVED, millis()));
+  sendRaw(proto::encCupRemoved(w, nextSeq(), reason, g_now));
 }
 
 static void sendPresetSelected(uint8_t source) {
@@ -183,7 +189,7 @@ static void sendAck(uint8_t ackedMsg, uint8_t status) {
 
 static void sendPong() {
   proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encPong(w, nextSeq(), millis(), g_state, statusFlags()));
+  sendRaw(proto::encPong(w, nextSeq(), g_now, g_state, statusFlags()));
 }
 
 // ---------------------------------------------------------------------------
@@ -233,8 +239,8 @@ static bool startPour(uint16_t ml, uint8_t mode, uint8_t source) {
     logMsg("Giam muc nuoc cho vua the tich coc");
   }
   if (mode > 1) mode = 0;
-  g_pump.startPour(target, mode, millis());
-  g_tFillStart = millis();
+  g_pump.startPour(target, mode, g_now);
+  g_tFillStart = g_now;
   g_pulseEndMs = 0;
   g_state = proto::ST_POURING;
   sendFillStarted(source);
@@ -246,7 +252,7 @@ static bool startPour(uint16_t ml, uint8_t mode, uint8_t source) {
 // Kết thúc lượt rót: ngắt relay, gửi FILL_DONE, chuyển trạng thái
 static void endPour(uint8_t stopReason) {
   if (g_state != proto::ST_POURING) return;
-  uint32_t elapsed = millis() - g_tFillStart;
+  uint32_t elapsed = g_now - g_tFillStart;
   if (stopReason == proto::STOP_NORMAL) g_pump.finish(PumpDriver::DONE_TARGET);
   else                                  g_pump.forceOff();
   g_pulseEndMs = 0;
@@ -298,7 +304,7 @@ static void selectPreset(uint8_t index, uint8_t source, bool startNow) {
 static void handleFrame(const proto::Frame &f) {
   const uint8_t *p = f.data;
   uint8_t n = f.len;
-  g_lastRxMs = millis();
+  g_lastRxMs = g_now;
   g_linkLost = false;
 
   switch (f.msg) {
@@ -381,9 +387,9 @@ static void handleFrame(const proto::Frame &f) {
         sendError(4, "PUMP_SET khi khong bom");
         break;
       }
-      g_pump.setDuty(ps.duty_pct, millis());
+      g_pump.setDuty(ps.duty_pct, g_now);
       // duration_ms > 0 = xung có thời hạn, hết hạn thì trả duty về 0
-      g_pulseEndMs = ps.duration_ms ? (millis() + ps.duration_ms) : 0;
+      g_pulseEndMs = ps.duration_ms ? (g_now + ps.duration_ms) : 0;
       break;
     }
     case proto::SET_MODE: {
@@ -413,7 +419,7 @@ static void handleFrame(const proto::Frame &f) {
       switch (ca.cmd) {
         case proto::CMD_TARE: {
           if (g_cup.present()) logMsg("CANH BAO: dang co coc - hay nhac coc ra truoc khi tare");
-          float b = g_cup.tare(millis());
+          float b = g_cup.tare(g_now);
 #if DEBUG_SERIAL
           Serial.print("Tare xong: mat khay ");
           Serial.print(b, 1);
@@ -430,6 +436,7 @@ static void handleFrame(const proto::Frame &f) {
         case proto::CMD_RESET_STATE:
           g_pcConfirmed = false;
           g_hasCupOk = false;
+          g_lastError[0] = 0;                 // PC yêu cầu xoá lỗi -> bắt đầu lại sạch sẽ
           g_tWaitPc = 0;
           g_state = g_cup.present() ? proto::ST_WAIT_PC : proto::ST_IDLE;
           break;
@@ -513,11 +520,37 @@ static void pollUart() {
 }
 
 // ---------------------------------------------------------------------------
+//  LỖI CẢM BIẾN SIÊU ÂM: tuột dây / hỏng HC-SR04 (nhiều mẫu liên tiếp = 0)
+//  Cảm biến siêu âm thỉnh thoảng hụt 1 mẫu là bình thường -> chỉ báo lỗi khi hụt
+//  CUP_FAULT_SAMPLES mẫu LIÊN TIẾP, và luôn ngắt bơm trước khi báo (an toàn).
+// ---------------------------------------------------------------------------
+static void pollSensorFault() {
+  // badStreak() đếm theo MẪU (mỗi CUP_SAMPLE_MS), không theo vòng loop -> gọi ở đây
+  // bao nhiêu lần cũng không làm sai số đếm.
+  if (g_cup.badStreak() == 0) {
+    if (g_sensorFault) g_lastError[0] = 0;   // cảm biến đọc được lại -> xoá lỗi cũ
+    g_sensorFault = false;
+    return;
+  }
+  if (g_cup.badStreak() < CUP_FAULT_SAMPLES || g_sensorFault) return;
+  g_sensorFault = true;
+  strncpy(g_lastError, "LOI_CAM_BIEN_SIEU_AM", sizeof(g_lastError) - 1);
+  g_lastError[sizeof(g_lastError) - 1] = 0;
+  logMsg("LOI CAM BIEN SIEU AM - kiem tra day HC-SR04");
+  if (g_state == proto::ST_POURING) endPour(proto::STOP_SENSOR_FAULT);
+  g_state = proto::ST_FAULT;
+  sendError(2, "LOI_CAM_BIEN_SIEU_AM");
+  sendStatus();
+}
+
+// ---------------------------------------------------------------------------
 //  Sự kiện cảm biến cốc
 // ---------------------------------------------------------------------------
 static void handleCupEvent(bool present) {
   if (present) {
-    g_tWaitPc = millis();
+    // Cốc mới = lượt rót mới: xoá lỗi cũ để PC không hiển thị lỗi đã qua
+    g_lastError[0] = 0;
+    g_tWaitPc = g_now;
     g_state = proto::ST_WAIT_PC;
     g_pcConfirmed = false;
     g_hasCupOk = false;
@@ -535,9 +568,11 @@ static void handleCupEvent(bool present) {
       logMsg("MAT COC -> NGAT BOM");
     }
     g_hasCupOk = false;
-    sendCupRemoved();
+    // "Mất cốc" có thể là do tuột dây cảm biến -> gửi kèm mã lý do để PC biết
+    sendCupRemoved(g_sensorFault ? proto::STOP_SENSOR_FAULT : proto::STOP_CUP_REMOVED);
     g_tWaitPc = 0;
-    g_state = proto::ST_IDLE;
+    // Cảm biến hỏng thì giữ nguyên trạng thái LỖI (đừng rơi về IDLE như nhấc cốc bình thường)
+    g_state = g_sensorFault ? proto::ST_FAULT : proto::ST_IDLE;
 #if DEBUG_SERIAL
     Serial.println("DA NHAC COC");
 #endif
@@ -549,6 +584,7 @@ static void handleCupEvent(bool present) {
 //  setup / loop
 // ---------------------------------------------------------------------------
 void setup() {
+  g_now = millis();
 #if DEBUG_SERIAL
   Serial.begin(115200);
   delay(80);
@@ -572,8 +608,9 @@ void setup() {
   g_voice.setCallbacks(onAudioChunk, onVoiceSegment, NULL);
   g_voice.begin();
 
+  g_now = millis();                   // đo cảm biến/đo tần số mic xong -> lấy mốc mới
   g_state = proto::ST_BOOT;
-  g_tLastHello = millis();
+  g_tLastHello = g_now;
   sendHello();
 #if DEBUG_SERIAL
   Serial.print("Baseline khay: ");
@@ -589,10 +626,12 @@ void setup() {
 }
 
 void loop() {
-  uint32_t now = millis();
+  g_now = millis();
+  uint32_t now = g_now;
 
   pollUart();
   g_cup.update(now);
+  pollSensorFault();                  // tuột dây / hỏng cảm biến -> LỖI + ngắt bơm
   g_voice.update(now);
   g_pump.update(now);                 // băm relay theo duty + cộng dồn ml + an toàn
 
