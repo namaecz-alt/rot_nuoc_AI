@@ -106,6 +106,14 @@ constexpr uint8_t FL_MANUAL       = 1 << 5;
 constexpr uint8_t AU_START = 1 << 0;
 constexpr uint8_t AU_END   = 1 << 1;
 
+// AUDIO_CHUNK.flags: 4 bit cao = tần số lấy mẫu THỰC TẾ của ESP (đơn vị 2 kHz).
+// Mic analog đọc bằng ADC ESP32 không đúng 16 kHz -> gửi kèm để PC đếm "tiếng" đúng.
+constexpr uint8_t  AU_RATE_SHIFT   = 4;
+constexpr uint16_t AU_RATE_STEP_HZ = 2000;
+inline uint16_t audioRateHz(uint8_t flags) {
+  return (uint16_t)(((flags >> AU_RATE_SHIFT) & 0x0F) * AU_RATE_STEP_HZ);
+}
+
 // năng lực
 constexpr uint8_t ESP_CAP_BUTTONS  = 1 << 0;
 constexpr uint8_t ESP_CAP_VOICE    = 1 << 1;
@@ -376,7 +384,12 @@ inline size_t encVoiceEvent(Writer &w, uint8_t seq, uint8_t kind, uint8_t index,
 }
 
 inline size_t encAudioChunk(Writer &w, uint8_t seq, uint8_t seq8, uint8_t flags,
-                            const int16_t *samples, uint16_t n) {
+                            const int16_t *samples, uint16_t n,
+                            uint16_t rate_hz = 0) {
+  if (rate_hz) {
+    flags = (uint8_t)((flags & 0x0F) |
+                      (uint8_t)(((uint8_t)((rate_hz / AU_RATE_STEP_HZ) & 0x0F)) << AU_RATE_SHIFT));
+  }
   w.begin(AUDIO_CHUNK, seq);
   w.u8(seq8); w.u8(flags); w.u16(n);
   for (uint16_t i = 0; i < n; i++) w.i16(samples[i]);

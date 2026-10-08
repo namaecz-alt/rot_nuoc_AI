@@ -17,6 +17,8 @@ Các nhóm bài:
   [6] firmware  - sketch ESP32 (esp32_cup_filler.ino + các .h) biên dịch được và
                   config.h khớp với cấu hình trên PC (preset, chân, cờ...)
   [7] cli       - bảng điều khiển tools/esp_cli.py chạy đúng kịch bản (dùng ESP giả lập)
+  [8] entry     - chạy THẬT chương trình người dùng gõ: tools/run_pc.py --demo
+                  (ESP giả lập + camera giả lập, kiểm tra đủ 10 bước của luồng thiết kế)
 """
 from __future__ import annotations
 
@@ -189,6 +191,33 @@ def test_voice() -> None:
         check(res is not None and res.ok and res.index == n - 1,
               "%d tiếng -> preset %d" % (n, n),
               "" if res is None else "-> %s" % res.text)
+
+    # Mic ANALOG của ESP không chạy đúng 16 kHz -> firmware gửi kèm mã tần số trong
+    # 4 bit cao của flags. PC phải đếm "tiếng" theo ĐÚNG tần số đó.
+    for n_burst, rate in ((1, 10000), (3, 10000), (2, 8000)):
+        tone = [int(9000 * np.sin(2 * np.pi * 300 * i / rate)) for i in range(int(0.20 * rate))]
+        gap = [0] * int(0.15 * rate)
+        samples = []
+        for k in range(n_burst):
+            samples += tone
+            if k < n_burst - 1:
+                samples += gap
+        samples += [0] * int(0.25 * rate)
+        vr = VoiceRecognizer(presets=(100, 150, 200, 250, 300), engine="peaks")
+        chunks = [samples[i:i + 96] for i in range(0, len(samples), 96)]
+        res = None
+        for ci, part in enumerate(chunks):
+            flags = (P.AU_START if ci == 0 else 0) | (P.AU_END if ci == len(chunks) - 1 else 0)
+            payload = P.encode_audio_chunk(ci & 0xFF, flags, part, rate_hz=rate)
+            info = P.parse_audio_chunk(payload)
+            vr.feed(info)
+            if info["end"]:
+                res = vr.analyze()
+        check(res is not None and res.ok and res.index == n_burst - 1,
+              "%d tiếng @ %d Hz (mã tần số trong flags) -> preset %d"
+              % (n_burst, rate, n_burst),
+              "flags rate = %s Hz, kết quả = %s" % (
+                  P.parse_audio_chunk(payload)["rate_hz"], None if res is None else res.index))
 
     # im lặng -> không ra mức nào
     pk = PeakCounter().analyze(np.zeros(16000, np.int16))
@@ -556,12 +585,41 @@ def test_cli() -> None:
           "rót đúng 200 ml trong kịch bản CLI")
 
 
+
+# ==========================================================================
+def test_entry() -> None:
+    """Chạy đúng lệnh mà người dùng sẽ gõ: tools/run_pc.py --port sim --synthetic --demo."""
+    print("== [8] CHẠY THẬT tools/run_pc.py --port sim --synthetic --demo ==")
+    cmd = [sys.executable, os.path.join(ROOT, "tools", "run_pc.py"),
+           "--port", "sim", "--synthetic", "--demo"]
+    try:
+        proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        check(False, "kịch bản tự chạy kết thúc trong 300 s")
+        return
+    out = (proc.stdout or "") + (proc.stderr or "")
+    tail = [l for l in out.strip().splitlines() if l.strip()]
+    check(proc.returncode == 0, "kịch bản tự chạy thành công (exit 0)",
+          "exit=%s | %s" % (proc.returncode, tail[-1] if tail else ""))
+    check("10/10 bước đạt" in out, "cả 10 bước của luồng thiết kế đều đạt")
+    for needle in ("bấm nút khi chưa có cốc -> ESP bỏ qua (nút còn khoá)",
+                   "camera đang tắt (chỉ bật khi có cốc)",
+                   "ESP gửi CUP_PLACED -> PC BẬT CAMERA",
+                   "bấm nút trước khi PC xác nhận -> ESP bỏ qua",
+                   "PC gửi CUP_OK và ESP mở khoá",
+                   "ESP gửi PRESET_SELECTED mức 200 ml và BẮT ĐẦU BƠM",
+                   "đúng mục tiêu 200 ml",
+                   "PC đóng camera"):
+        check(needle in out, "kịch bản có bước: %s" % needle)
+    check("CHUA MO KHOA" in out, "ESP32 giả lập cũng từ chối nút khi chưa mở khoá")
+
+
 # ==========================================================================
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-cpp", action="store_true", help="bỏ bài kiểm tra biên dịch C++")
     ap.add_argument("--only", default=None,
-                    help="chỉ chạy một nhóm: protocol|cpp|voice|flow|session|firmware|cli")
+                    help="chỉ chạy một nhóm: protocol|cpp|voice|flow|session|firmware|cli|entry")
     args = ap.parse_args()
 
     groups = {
@@ -572,6 +630,7 @@ def main() -> int:
         "session": test_session,
         "firmware": lambda: test_firmware(not args.no_cpp),
         "cli": test_cli,
+        "entry": test_entry,
     }
     if args.only:
         groups = {args.only: groups[args.only]}

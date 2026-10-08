@@ -268,8 +268,16 @@ static void checkEncodeEsp2Pc(const Vector &v) {
       int16_t s = (int16_t)((uint16_t)v.payload[i] | ((uint16_t)v.payload[i + 1] << 8));
       samples.push_back(s);
     }
+    uint16_t rate = (fld("rate_hz") != NULL) ? (uint16_t)fldi("rate_hz") : 0;
     n = proto::encAudioChunk(w, v.seq, (uint8_t)fldi("seq8"), (uint8_t)fldi("flags"),
-                             samples.empty() ? NULL : &samples[0], (uint16_t)samples.size());
+                             samples.empty() ? NULL : &samples[0], (uint16_t)samples.size(),
+                             rate);
+    if (proto::audioRateHz((uint8_t)fldi("flags")) != rate) {
+      char b[64];
+      snprintf(b, sizeof(b), "audioRateHz tra ve %u, file vector ghi %u",
+               (unsigned)proto::audioRateHz((uint8_t)fldi("flags")), (unsigned)rate);
+      bad("ma tan so lay mau", b);
+    }
   } else if (v.name.compare(0, 6, "button") == 0) {
     n = proto::encButtonEvent(w, v.seq, (uint8_t)fldi("index"), (uint8_t)fldi("event"),
                               (uint16_t)fldi("press_ms"), (uint8_t)fldi("state"));

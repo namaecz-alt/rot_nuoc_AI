@@ -254,6 +254,12 @@ VOICE_CLAPS = 2         # đếm số tiếng vỗ tay/gõ
 VOICE_TEXT = 3          # PC nhận dạng ra chữ (ASR) - chỉ PC->ESP qua PRESET_SELECTED
 
 # ---- cờ gói AUDIO_CHUNK ---------------------------------------------------
+# AUDIO_CHUNK.flags: 4 bit cao = tần số lấy mẫu THỰC TẾ của ESP (đơn vị 2 kHz).
+# Mic analog đọc bằng ADC ESP32 không đúng 16 kHz, nên firmware gửi kèm mã này để
+# PC đếm "tiếng"/nhận dạng với đúng tần số. 0 = không gửi (PC dùng tần số cấu hình).
+AU_RATE_SHIFT = 4
+AU_RATE_STEP_HZ = 2000
+
 AU_START = 1 << 0        # chunk đầu của một đoạn tiếng nói
 AU_END = 1 << 1          # chunk cuối của đoạn (PC chốt kết quả sau chunk này)
 
@@ -508,8 +514,13 @@ def parse_voice_event(payload: bytes) -> dict:
     return {"kind": k, "index": i, "confidence": c, "n_peaks": n, "rms": rms, "dur_ms": d}
 
 
-def encode_audio_chunk(seq8: int, flags: int, samples: Iterable[int]) -> bytes:
+def encode_audio_chunk(seq8: int, flags: int, samples: Iterable[int],
+                       rate_hz: int = 0) -> bytes:
+    """Đóng gói PCM. ``rate_hz`` > 0 sẽ ghi mã tần số thực tế vào 4 bit cao của flags."""
     samples = list(samples)
+    if rate_hz:
+        flags = (int(flags) & 0x0F) | (((int(round(rate_hz / AU_RATE_STEP_HZ))) & 0x0F)
+                                       << AU_RATE_SHIFT)
     head = struct.pack("<BBH", seq8 & 0xFF, flags & 0xFF, len(samples))
     return head + struct.pack("<%dh" % len(samples), *samples) if samples else head
 
@@ -517,8 +528,9 @@ def encode_audio_chunk(seq8: int, flags: int, samples: Iterable[int]) -> bytes:
 def parse_audio_chunk(payload: bytes) -> dict:
     seq8, flags, n = struct.unpack_from("<BBH", payload, 0)
     samples = list(struct.unpack_from("<%dh" % n, payload, 4)) if n else []
+    rate_hz = ((flags >> AU_RATE_SHIFT) & 0x0F) * AU_RATE_STEP_HZ
     return {"seq": seq8, "flags": flags, "start": bool(flags & AU_START), "end": bool(flags & AU_END),
-            "n_samples": n, "samples": samples}
+            "rate_hz": rate_hz, "n_samples": n, "samples": samples}
 
 
 def encode_button_event(index: int, event: int, press_ms: int, state: int) -> bytes:

@@ -202,8 +202,8 @@ LED sáng đều → **bấm nút** → bơm chạy.
 ## 8) Chạy cả hệ thống (ESP32 + camera + nhận diện)
 
 ```bash
-python3 tools/run_pc.py --port COM5 --auto     # ESP thật + camera + nhận diện tự động
-python3 tools/run_pc.py --port sim --auto --synthetic   # thử không cần gì cả
+python3 tools/run_pc.py --port COM5            # ESP thật + camera + nhận diện tự động
+python3 tools/run_pc.py --port sim --synthetic --demo  # chạy thật, 10 bước, in ✔/✘
 ```
 
 Luồng tự động (`cupfiller/session.py`):

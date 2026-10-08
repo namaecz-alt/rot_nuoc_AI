@@ -347,6 +347,13 @@ class VoiceRecognizer:
     def feed(self, chunk: Dict) -> None:
         """Nạp một gói AUDIO_CHUNK đã giải mã (parse_audio_chunk)."""
         samples = chunk.get("samples") or []
+        # ESP gửi kèm tần số lấy mẫu THỰC TẾ (mic analog không đúng 16 kHz) -> đếm
+        # "tiếng" theo đúng tần số đó, nếu không số tiếng sẽ bị sai.
+        rate = int(chunk.get("rate_hz") or 0)
+        if rate and int(getattr(self.peak, "sample_rate", 0)) != rate:
+            self.peak = PeakCounter(sample_rate=rate)
+            self.sample_rate = rate
+            self.log("[voice] ESP báo tần số lấy mẫu thực tế %d Hz" % rate)
         if chunk.get("start"):
             self._buf = []
             self._active = True

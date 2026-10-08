@@ -149,6 +149,11 @@ def build_vectors() -> List[dict]:
         "payload": P.encode_audio_chunk(9, P.AU_END, [0, 0, 0, 0])}, {
         "seq8": 9, "flags": 2, "n_samples": 4, "first": 0, "last": 0}, "esp2pc"))
 
+    v.append(_sc("audio_chunk_rate10k", P.Msg.AUDIO_CHUNK, 29, {
+        "payload": P.encode_audio_chunk(1, P.AU_START, [500, -500, 0, 0], rate_hz=10000)}, {
+        "seq8": 1, "flags": 0x51, "rate_hz": 10000, "n_samples": 4,
+        "first": 500, "last": 0}, "esp2pc"))
+
     v.append(_sc("audio_chunk_96", P.Msg.AUDIO_CHUNK, 21, {
         "payload": P.encode_audio_chunk(255, P.AU_END, list(range(-48, 48)))}, {
         "seq8": 255, "flags": 2, "n_samples": 96, "first": -48, "last": 47}, "esp2pc"))

@@ -43,8 +43,8 @@ nhấc cốc, **mất UART 3 s**, giữ nút 2 s = dừng khẩn cấp. Relay lu
 ```bash
 pip install -r requirements_pc.txt                    # đã thêm pyserial
 python3 tools/esp_cli.py --port sim --demo            # kịch bản: đặt cốc → xác nhận → bấm nút → rót 200 ml
-python3 tools/run_pc.py --port sim --auto --synthetic # cả hệ thống: camera giả lập + ESP giả lập
-python3 tools/test_comms.py                           # 77 bài tự kiểm chứng (giao thức, C++, luồng, firmware)
+python3 tools/run_pc.py --port sim --synthetic --demo  # cả hệ thống, 10 bước, không cần màn hình
+python3 tools/test_comms.py                           # 99 bài tự kiểm chứng (giao thức, C++, luồng, firmware)
 ```
 
 **Chạy với ESP32 thật:**
@@ -53,7 +53,11 @@ python3 tools/test_comms.py                           # 77 bài tự kiểm ch�
 python3 tools/esp_cli.py --port COM5                  # bảng điều khiển: status, ok 300, tare, watch...
 python3 tools/run_pc.py --port COM5                   # cả hệ thống (Windows: run_esp_windows.bat)
 python3 tools/run_pc.py --port /dev/ttyUSB0           # Linux/macOS
+python3 tools/run_pc.py --port COM5 --no-window       # chạy qua SSH/Pi không màn hình
 ```
+
+`tools/run_pc.py --demo` tự chạy đúng 10 bước và in ra ✔/✘ từng bước — dùng để kiểm tra
+máy đã cài đúng chưa mà không cần cốc, không cần nước, không cần ESP32 thật.
 
 Sơ đồ dây, cách nạp firmware và hiệu chuẩn lưu lượng: **[`firmware/README.md`](firmware/README.md)**.
 Mọi thứ cần chỉnh cho đúng máy của bạn nằm ở **`firmware/esp32_cup_filler/config.h`**.
