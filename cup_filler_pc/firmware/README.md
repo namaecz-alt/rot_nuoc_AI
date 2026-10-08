@@ -109,6 +109,21 @@ LED báo trạng thái: nháy chậm = chờ đặt cốc · **nháy nhanh = ch�
 
 ---
 
+## 2b) Các file trong `firmware/` — file nào làm gì
+
+| File | Nội dung |
+|---|---|
+| `esp32_cup_filler/serial_link.h` | **Phần GIAO TIẾP VỚI PC (file riêng)**: chọn cổng (UART2 GPIO16/17 hay cáp USB của board), mở cổng, đóng khung gói tin, gửi mọi loại tin (`link.status()`, `link.error()`, `link.log()`...), đọc byte và tách khung rồi đưa từng khung cho `.ino` (`link.poll()`). Muốn xem/sửa cách ESP nói chuyện với PC thì mở **file này**. |
+| `esp32_cup_filler/esp32_cup_filler.ino` | Logic của máy: cảm biến cốc, nút bấm, mic, bơm/relay, máy trạng thái, các điều kiện an toàn. Chỉ gọi `link.…` chứ không tự đọc/ghi serial. |
+| `esp32_cup_filler/config.h` | Chân GPIO, tốc độ bơm, preset ml, chọn kênh UART2 hay cáp USB (`UART_USE_USB_SERIAL`)... — **sửa theo máy của bạn**. |
+| `esp32_cup_filler/protocol.h` | Mã hoá/giải mã từng byte của giao thức (khớp với `cupfiller/protocol.py` bên PC). |
+| `esp32_cup_filler/esp32_cup_filler_usb.cpp` | Bản dùng **cáp USB của board**: bật `UART_USE_USB_SERIAL 1` + `DEBUG_SERIAL 0` rồi `#include` file `.ino` ở trên (chọn môi trường `esp32dev_usb`, xem §3). |
+| `esp32_cup_filler/cup_sensor.h`, `buttons.h`, `pump.h`, `voice_mic.h` | Driver: cảm biến siêu âm, 5 nút bấm, bơm qua relay, mic + đếm tiếng động. |
+| `platformio.ini` + `.vscode/` | Cấu hình VS Code + PlatformIO: 2 môi trường `esp32dev` (UART2) và `esp32dev_usb` (cáp USB). |
+| `host_test/` | Bộ test chạy trên máy tính: `test_protocol.cpp` (vector vàng) và `test_firmware_run.cpp` (chạy THẬT `.ino` bằng g++, không cần phần cứng). |
+
+---
+
 ## 3) Nạp firmware (Arduino IDE)
 
 1. Cài **Arduino IDE 2.x**.
@@ -368,7 +383,7 @@ Bộ kiểm tra trên PC đối chiếu **từng byte** giữa C++ trong firmwar
 các kịch bản (khoá nút → CUP_OK → bơm → nhấc cốc → ngắt bơm):
 
 ```bash
-python3 tools/test_comms.py                 # toàn bộ (177 bài)
+python3 tools/test_comms.py                 # toàn bộ (182 bài)
 python3 tools/test_comms.py --only firmware # chỉ phần config/sketch
 python3 tools/test_comms.py --only fwrun    # CHẠY THẬT firmware trên PC (máy ảo mini)
 ```

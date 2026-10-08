@@ -579,6 +579,25 @@ def test_firmware(use_cpp: bool = True) -> None:
             check(os.path.exists(os.path.join(ROOT, "firmware", ".vscode", f)),
                   "có firmware/.vscode/%s cho VS Code" % f)
 
+    # ---- file riêng cho PHẦN GIAO TIẾP SERIAL (serial_link.h) ----
+    sl_path = os.path.join(ROOT, "firmware", "esp32_cup_filler", "serial_link.h")
+    check(os.path.exists(sl_path), "có file riêng serial_link.h cho phần giao tiếp với PC")
+    sl = open(sl_path, encoding="utf-8").read() if os.path.exists(sl_path) else ""
+    if sl:
+        check("UART_USE_USB_SERIAL" in sl and "Serial2" in sl and "return Serial;" in sl,
+              "serial_link.h chọn cổng nói chuyện: UART2 (GPIO16/17) hoặc cáp USB của board")
+        check(all(k in sl for k in ("proto::encHello", "proto::encStatus", "proto::encFillProgress",
+                                    "proto::encError", "proto::encAck", "proto::encAudioChunk")),
+              "serial_link.h có đủ các hàm gửi gói tin ESP -> PC")
+        check("_dec.push" in sl and "_dec.pop" in sl and ".available() > 0" in sl,
+              "serial_link.h đọc byte -> tách khung -> trả từng khung cho .ino (poll)")
+        ino_src = open(ino, encoding="utf-8").read() if os.path.exists(ino) else ""
+        raw = [t for t in ("PC.read(", "PC.write(", "PC.available(", "g_dec.", "g_tx[")
+               if t in ino_src]
+        check("link.begin(" in ino_src and "link.poll(" in ino_src and not raw,
+              ".ino chỉ gọi link.begin/link.poll, không còn đọc/ghi serial trực tiếp",
+              ", ".join(raw))
+
     # ---- file MỚI: bản nói chuyện với PC qua cáp USB của board (không cần USB-TTL) ----
     usb_cpp = os.path.join(ROOT, "firmware", "esp32_cup_filler", "esp32_cup_filler_usb.cpp")
     check(os.path.exists(usb_cpp), "có file mới esp32_cup_filler_usb.cpp (bản qua cáp USB)")
@@ -686,7 +705,8 @@ def test_firmware(use_cpp: bool = True) -> None:
 
     # sketch dùng đúng các hàm của protocol.h (không gọi hàm không tồn tại)
     ino_text = open(ino, encoding="utf-8").read() if os.path.exists(ino) else ""
-    used = set(re.findall(r"proto::(enc[A-Za-z]+|parse[A-Za-z]+)", ino_text))
+    proto_users = ino_text + (open(sl_path, encoding="utf-8").read() if os.path.exists(sl_path) else "")
+    used = set(re.findall(r"proto::(enc[A-Za-z]+|parse[A-Za-z]+)", proto_users))
     check(not [u for u in used if u not in ph], "sketch chỉ gọi hàm có thật trong protocol.h",
           ", ".join(sorted(u for u in used if u not in ph)))
     check("INPUT_PULLUP" not in ino_text or "g_btn" in ino_text, "sketch dùng ButtonBank cho nút")

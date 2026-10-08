@@ -19,6 +19,7 @@
 //  An toàn tại chỗ (không phụ thuộc PC): quá thể tích, quá thời gian, mất cốc,
 //  mất liên lạc UART, nhấn giữ nút 2 giây -> NGẮT BƠM.
 //
+//  GIAO TIẾP VỚI MÁY TÍNH (chọn cổng, đóng khung, gửi/nhận) nằm ở serial_link.h.
 //  Sơ đồ chân & cách nạp: firmware/README.md   -   giao thức: docs/PROTOCOL.md
 // ===========================================================================
 #include <Arduino.h>
@@ -29,22 +30,14 @@
 #include "buttons.h"
 #include "pump.h"
 #include "voice_mic.h"
+#include "serial_link.h"      // giao tiếp với PC (UART2 hoặc cáp USB)
 
 // ---------------------------------------------------------------------------
-//  Cổng nối máy tính: UART2 (GPIO16/17, cần mạch USB-TTL) hoặc luôn cổng USB của
-//  board (UART_USE_USB_SERIAL 1 -> không cần thêm linh kiện nào). Xem config.h.
+//  Giao tiếp với máy tính: MỌI thứ về đường truyền (chọn cổng UART2/cáp USB, mở
+//  cổng, đóng khung, gửi, nhận) nằm trong serial_link.h - file riêng cho phần
+//  serial. Ở đây chỉ giữ một đối tượng "link" và gọi link.sendXxx()/link.poll().
 // ---------------------------------------------------------------------------
-#if UART_USE_USB_SERIAL
-HardwareSerial &PC = Serial;          // nói chuyện với PC qua cáp USB của board
-#else
-HardwareSerial &PC = Serial2;         // qua mạch USB-TTL ở GPIO16/17
-#endif
-
-static proto::Decoder g_dec;
-static proto::Frame g_frame;
-static uint8_t g_tx[320];
-static uint8_t g_seq = 0;
-static uint8_t g_audioSeq = 0;
+static SerialLink link;
 
 static CupSensor g_cup;
 static ButtonBank g_btn;
@@ -63,7 +56,6 @@ static uint16_t g_presetIndex = PRESET_INDEX_DEFAULT;
 static uint16_t g_presetMl = PRESET_ML[PRESET_INDEX_DEFAULT];
 static uint32_t g_tFillStart = 0;
 
-static uint32_t g_lastRxMs = 0;         // 0 = chưa từng nhận gói nào từ PC
 static bool g_linkLost = false;
 static uint32_t g_tLastHello = 0;
 static uint32_t g_tLastStatus = 0;
@@ -79,15 +71,11 @@ static bool g_sensorFault = false;      // đã báo LỖI CẢM BIẾN cho đ�
 static uint32_t g_now = 0;
 
 // ---------------------------------------------------------------------------
-//  Gửi gói tin
+//  Gửi tin lên PC. Phần KHUNG + GHI RA CỔNG nằm ở serial_link.h; ở đây chỉ lấy
+//  dữ liệu từ trạng thái của máy (cốc, bơm, nút, mic) rồi đưa xuống link.
 // ---------------------------------------------------------------------------
-static uint8_t nextSeq() {
-  g_seq++;
-  return g_seq;
-}
-
-static void sendRaw(size_t len) {
-  if (len) PC.write(g_tx, len);
+static uint16_t ml10(float ml) {      // ml (số thực) -> số nguyên ml, có làm tròn
+  return (uint16_t)(ml + 0.5f);
 }
 
 // Chép chuỗi có giới hạn vào đệm, LUÔN kết thúc bằng '\0' (thay strncpy để không
@@ -102,20 +90,13 @@ static void copyText(char *dst, size_t cap, const char *src) {
 }
 
 static void logMsg(const char *text) {
-#if DEBUG_SERIAL
-  Serial.println(text);
-#endif
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encLog(w, nextSeq(), text));
+  link.log(text);
 }
 
-static void sendHello() {
+static uint8_t helloCaps() {
   uint8_t caps = proto::ESP_CAP_BUTTONS | proto::ESP_CAP_US_SENSOR | proto::ESP_CAP_FLOW_CAL;
   if (MIC_TYPE != 0) caps |= proto::ESP_CAP_VOICE;
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encHello(w, nextSeq(), FW_VERSION_MAJOR, caps, PRESET_ML, N_BUTTONS,
-                          (uint16_t)(g_pump.flow() * 10.0f)));
-  g_tLastHello = g_now;
+  return caps;
 }
 
 static uint8_t statusFlags() {
@@ -125,87 +106,69 @@ static uint8_t statusFlags() {
   if (g_pcConfirmed) f |= proto::FL_PC_CONFIRMED;
   if (g_pump.isOn()) f |= proto::FL_PUMPING;
   if (MIC_TYPE != 0) f |= proto::FL_VOICE_ACTIVE;
-  if (g_lastRxMs && (now - g_lastRxMs) < LINK_TIMEOUT_MS) f |= proto::FL_LINK_OK;
+  if (link.everRx() && (now - link.lastRxMs()) < LINK_TIMEOUT_MS) f |= proto::FL_LINK_OK;
   if (g_state == proto::ST_MANUAL)   f |= proto::FL_MANUAL;
   return f;
 }
 
+static void sendHello() {
+  link.hello(FW_VERSION_MAJOR, helloCaps(), PRESET_ML, N_BUTTONS, (uint16_t)(g_pump.flow() * 10.0f));
+  g_tLastHello = g_now;
+}
+
 static void sendStatus() {
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encStatus(w, nextSeq(), g_state, statusFlags(),
-                           (uint16_t)(g_pump.pouredMl() + 0.5f),
-                           (uint16_t)(g_pump.targetMl() + 0.5f),
-                           (uint16_t)(g_pump.maxMl() + 0.5f), g_now));
+  link.status(g_state, statusFlags(), ml10(g_pump.pouredMl()), ml10(g_pump.targetMl()),
+              ml10(g_pump.maxMl()), g_now);
   g_tLastStatus = g_now;
 }
 
 static void sendProgress() {
-  uint16_t poured = (uint16_t)(g_pump.pouredMl() + 0.5f);
-  uint16_t target = (uint16_t)(g_pump.targetMl() + 0.5f);
-  uint16_t pct = target ? (uint16_t)((100UL * poured) / target) : 0;
-  if (pct > 200) pct = 200;
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encFillProgress(w, nextSeq(), poured, (uint8_t)pct, target, g_state));
+  link.progress(g_state, ml10(g_pump.pouredMl()), ml10(g_pump.targetMl()));
   g_tLastProgress = g_now;
 }
 
 static void sendCupPlaced(uint8_t flags) {
   float dist = g_cup.lastDistance();
-  float base = g_cup.baseline();
-  float h = g_cup.cupHeight();
   if (dist < 0) dist = 0;
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encCupPlaced(w, nextSeq(), (uint16_t)(dist + 0.5f), (uint16_t)(base + 0.5f),
-                              (uint16_t)(h + 0.5f), flags, g_now));
+  link.cupPlaced(ml10(dist), ml10(g_cup.baseline()), ml10(g_cup.cupHeight()), flags, g_now);
   g_tLastCupRetry = g_now;
 }
 
 static void sendCupRemoved(uint8_t reason) {
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encCupRemoved(w, nextSeq(), reason, g_now));
+  link.cupRemoved(reason, g_now);
 }
 
 static void sendPresetSelected(uint8_t source) {
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encPresetSelected(w, nextSeq(), (uint8_t)g_presetIndex, g_presetMl, source));
+  link.presetSelected((uint8_t)g_presetIndex, g_presetMl, source);
 }
 
 static void sendFillStarted(uint8_t source) {
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encFillStarted(w, nextSeq(), (uint16_t)(g_pump.targetMl() + 0.5f),
-                                g_pump.mode(), source, (uint16_t)(g_pump.maxMl() + 0.5f)));
+  link.fillStarted(ml10(g_pump.targetMl()), g_pump.mode(), source, ml10(g_pump.maxMl()));
 }
 
 static void sendFillDone(uint8_t status, uint32_t elapsedMs) {
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encFillDone(w, nextSeq(), (uint16_t)(g_pump.pouredMl() + 0.5f),
-                             (uint16_t)(g_pump.targetMl() + 0.5f), status, elapsedMs));
+  link.fillDone(ml10(g_pump.pouredMl()), ml10(g_pump.targetMl()), status, elapsedMs);
 }
 
 static void sendButtonEvent(uint8_t index, uint8_t event, uint16_t pressMs) {
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encButtonEvent(w, nextSeq(), index, event, pressMs, g_state));
+  link.buttonEvent(index, event, pressMs, g_state);
 }
 
 static void sendVoiceEvent(uint8_t kind, uint8_t index, uint8_t conf, uint8_t peaks,
                            uint16_t rms, uint16_t durMs) {
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encVoiceEvent(w, nextSeq(), kind, index, conf, peaks, rms, durMs));
+  link.voiceEvent(kind, index, conf, peaks, rms, durMs);
 }
 
 static void sendError(uint8_t code, const char *text) {
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encError(w, nextSeq(), code, text));
+  link.error(code, text);
 }
 
 static void sendAck(uint8_t ackedMsg, uint8_t status) {
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encAck(w, nextSeq(), ackedMsg, status));
+  link.ack(ackedMsg, status);
 }
 
 static void sendPong() {
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encPong(w, nextSeq(), g_now, g_state, statusFlags()));
+  link.pong(g_now, g_state, statusFlags());
 }
 
 // ---------------------------------------------------------------------------
@@ -320,7 +283,7 @@ static void selectPreset(uint8_t index, uint8_t source, bool startNow) {
 static void handleFrame(const proto::Frame &f) {
   const uint8_t *p = f.data;
   uint8_t n = f.len;
-  g_lastRxMs = g_now;
+  // (mốc "nhận gói cuối" do SerialLink ghi trong poll() - xem serial_link.h)
   g_linkLost = false;
 
   switch (f.msg) {
@@ -490,13 +453,7 @@ static void selectPreset(uint8_t index, uint8_t source, bool startNow);
 
 static void onAudioChunk(const int16_t *samples, uint16_t n, uint8_t flags, void *user) {
   (void)user;
-#if VOICE_MODE == 2
-  if (flags & proto::AU_START) g_audioSeq = 0;
-  proto::Writer w(g_tx, sizeof(g_tx));
-  sendRaw(proto::encAudioChunk(w, nextSeq(), g_audioSeq++, flags, samples, n));
-#else
-  (void)samples; (void)n; (void)flags;
-#endif
+  link.audioChunk(samples, n, flags);
 }
 
 static void onVoiceSegment(uint16_t nPeaks, uint16_t rms, uint16_t durMs, void *user) {
@@ -527,13 +484,7 @@ static void onVoiceSegment(uint16_t nPeaks, uint16_t rms, uint16_t durMs, void *
 //  Đọc UART (không chặn, có hạn mức mỗi vòng)
 // ---------------------------------------------------------------------------
 static void pollUart() {
-  uint16_t budget = UART_RX_BUDGET;
-  while (budget-- > 0 && PC.available() > 0) {
-    if (g_dec.push((uint8_t)PC.read())) {
-      while (g_dec.pop(g_frame)) handleFrame(g_frame);   // xử lý ngay, không để tràn hàng đợi
-    }
-  }
-  while (g_dec.pop(g_frame)) handleFrame(g_frame);
+  link.poll(g_now, handleFrame);      // đọc byte -> tách khung -> handleFrame() (serial_link.h)
 }
 
 // ---------------------------------------------------------------------------
@@ -611,13 +562,7 @@ void setup() {
   Serial.print(".");
   Serial.println(FW_VERSION_MINOR);
 #endif
-  PC.setRxBufferSize(2048);
-  PC.setTxBufferSize(2048);
-#if UART_USE_USB_SERIAL
-  PC.begin(UART_BAUD);                // cổng USB của board (đã có sẵn chân qua chip USB-UART)
-#else
-  PC.begin(UART_BAUD, SERIAL_8N1, PIN_UART_RX, PIN_UART_TX);
-#endif
+  link.begin();                       // mở cổng nói chuyện với PC (xem serial_link.h)
 
   pinMode(PIN_LED, OUTPUT);
   digitalWrite(PIN_LED, LOW);
@@ -694,8 +639,8 @@ void loop() {
   }
 
   // ---- mất liên lạc với PC ----------------------------------------------
-  bool linkOk = (g_lastRxMs != 0) && ((now - g_lastRxMs) < LINK_TIMEOUT_MS);
-  if (!linkOk && g_lastRxMs != 0 && !g_linkLost) {
+  bool linkOk = link.everRx() && ((now - link.lastRxMs()) < LINK_TIMEOUT_MS);
+  if (!linkOk && link.everRx() && !g_linkLost) {
     g_linkLost = true;
     logMsg("MAT LIEN LAC VOI PC");
 #if LINK_STOPS_PUMP
@@ -739,6 +684,6 @@ void loop() {
 
   updateLed(now);
 #if VOICE_MODE == 2
-  if (PC.availableForWrite() < 64) delay(1);   // nhường chút thời gian cho UART
+  if (link.txFree() < 64) delay(1);            // nhường chút thời gian cho UART
 #endif
 }

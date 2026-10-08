@@ -45,7 +45,7 @@ pip install -r requirements_pc.txt                    # đã thêm pyserial
 python3 tools/esp_cli.py --port sim --demo            # kịch bản: đặt cốc → xác nhận → bấm nút → rót 200 ml
 python3 tools/run_pc.py --port sim --synthetic --demo  # cả hệ thống, 10 bước, không cần màn hình
 python3 tools/web.py --port sim                         # web UI chế độ ESP32 (mở trình duyệt, tự chạy)
-python3 tools/test_comms.py                           # 177 bài tự kiểm chứng (giao thức, C++, luồng, firmware chạy thật trên PC, web)
+python3 tools/test_comms.py                           # 182 bài tự kiểm chứng (giao thức, C++, luồng, firmware chạy thật trên PC, web)
 ```
 
 **Nạp firmware ESP32 (VS Code + PlatformIO):** mở thư mục `cup_filler_pc/firmware` bằng VS Code
@@ -179,13 +179,15 @@ cup_filler/
 │   ├── esp_cli.py             # bảng điều khiển ESP32 (thật/giả lập): status, ok, tare, watch
 │   └── web.py                 # giao diện web (--port sim|COM5 để chạy chế độ ESP32)
 │   ├── gen_protocol_vectors.py# sinh lại vector vàng sau khi sửa giao thức
-│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (177 bài, không cần phần cứng)
+│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (182 bài, không cần phần cứng)
 ├── firmware/                  # FIRMWARE ESP32 - mở bằng VS Code + PlatformIO
 │   ├── platformio.ini         # 2 môi trường: esp32dev (UART2) / esp32dev_usb (cáp USB)
 │   ├── .vscode/               # gợi ý extension + cấu hình cho VS Code
-│   ├── esp32_cup_filler/      # config.h (sửa theo máy bạn), protocol.h, các driver
-│   │   ├── esp32_cup_filler.ino      # bản UART2 (GPIO16/17) - cần mạch USB-TTL
-│   │   └── esp32_cup_filler_usb.cpp  # bản qua CÁP USB của board - không cần USB-TTL
+│   ├── esp32_cup_filler/      # firmware: logic + driver + giao tiếp PC
+│   │   ├── serial_link.h             # GIAO TIẾP VỚI PC (chọn cổng, gửi/nhận khung)
+│   │   ├── esp32_cup_filler.ino      # logic máy rót - bản UART2 (cần mạch USB-TTL)
+│   │   ├── esp32_cup_filler_usb.cpp  # bản qua CÁP USB của board - không cần USB-TTL
+│   │   └── config.h, protocol.h, cup_sensor.h, buttons.h, pump.h, voice_mic.h
 │   └── host_test/             # test_protocol.cpp + vector vàng, test_firmware_run.cpp
 │                              #   (máy ảo mini: CHẠY THẬT sketch trên PC bằng g++)
 ├── docs/PROTOCOL.md           # đặc tả giao thức UART ESP32 ↔ PC

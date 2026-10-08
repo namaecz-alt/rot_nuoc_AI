@@ -21,7 +21,8 @@
 //      esp32_cup_filler.ino.cpp (bản UART2 do PlatformIO sinh ra) -> chỉ biên dịch file này.
 //    * Với env esp32dev, Arduino IDE, hay bộ test host_test: CUP_USB_LINK không được định
 //      nghĩa -> file này RỖNG, không sinh setup()/loop() thứ hai, mọi thứ giữ nguyên.
-//  Nội dung gói tin, mã giao thức... KHÔNG đổi: chỉ đổi cổng nào được dùng để gửi/nhận.
+//  Nội dung gói tin, mã giao thức... KHÔNG đổi: chỉ đổi cổng nào được dùng để gửi/nhận
+//  (mã đường truyền nằm ở serial_link.h; file này chỉ chọn bản UART2 hay bản cáp USB).
 //  Xem docs/PROTOCOL.md và firmware/README.md (§3 "Nạp bằng VS Code + PlatformIO").
 // ===========================================================================
 
