@@ -573,18 +573,60 @@ def test_firmware(use_cpp: bool = True) -> None:
               "có 2 môi trường: esp32dev (UART2) và esp32dev_usb (cổng USB của board)")
         check(pio.count("monitor_speed = 115200") >= 1, "monitor_speed 115200 khớp debug Serial")
         check("upload_speed = 921600" in pio, "upload_speed 921600 như README hướng dẫn")
-        check("-DUART_USE_USB_SERIAL=1" in pio and "-DDEBUG_SERIAL=0" in pio,
-              "env dùng cổng USB bật UART_USE_USB_SERIAL=1 kèm DEBUG_SERIAL=0 (đúng yêu cầu firmware)")
+        check("-DCUP_USB_LINK=1" in pio,
+              "env esp32dev_usb bật CUP_USB_LINK -> biên dịch file mới esp32_cup_filler_usb.cpp")
         for f in ("extensions.json", "settings.json"):
             check(os.path.exists(os.path.join(ROOT, "firmware", ".vscode", f)),
                   "có firmware/.vscode/%s cho VS Code" % f)
 
-    # ---- mô phỏng bước PlatformIO sinh prototype cho .ino (nếu máy có PlatformIO) ----
+    # ---- file MỚI: bản nói chuyện với PC qua cáp USB của board (không cần USB-TTL) ----
+    usb_cpp = os.path.join(ROOT, "firmware", "esp32_cup_filler", "esp32_cup_filler_usb.cpp")
+    check(os.path.exists(usb_cpp), "có file mới esp32_cup_filler_usb.cpp (bản qua cáp USB)")
+    usb_src = open(usb_cpp, encoding="utf-8").read() if os.path.exists(usb_cpp) else ""
+    if usb_src:
+        check("#define UART_USE_USB_SERIAL 1" in usb_src and "#define DEBUG_SERIAL 0" in usb_src,
+              "file mới tự bật UART_USE_USB_SERIAL=1 + DEBUG_SERIAL=0 (Serial.write ra cổng USB)")
+        check('#include "esp32_cup_filler.ino"' in usb_src and "CUP_USB_LINK" in usb_src,
+              "file mới include bản .ino cũ và có khoá CUP_USB_LINK (không sinh setup/loop thứ hai)")
+
+    # ---- hai env phải chỉ biên dịch MỘT bản: kiểm tra bằng chính platformio.fs ----
+    has_pio = False
     try:
         import importlib.util
         has_pio = importlib.util.find_spec("platformio") is not None
     except Exception:
-        has_pio = False
+        pass
+    if has_pio:
+        try:
+            from platformio.fs import match_src_files
+            try:                       # danh sách đuôi nguồn của PlatformIO (piobuild cần SCons)
+                from platformio.builder.tools.piobuild import SRC_BUILD_EXT as _exts
+            except Exception:
+                _exts = ["c", "cc", "cpp", "cxx", "c++", "s", "S", "asm", "spp", "SPP", "sx", "ASM"]
+            sec, cur = {}, None
+            for line in pio.splitlines():
+                msec = re.match(r"^\s*\[(.+?)\]\s*$", line)
+                if msec:
+                    cur = msec.group(1)
+                    continue
+                mopt = re.match(r"^\s*([A-Za-z_]+)\s*=\s*(\S.*?)\s*$", line)
+                if mopt and cur:
+                    sec.setdefault(cur, {}).setdefault(mopt.group(1), mopt.group(2))
+            f_uart = sec.get("env:esp32dev", {}).get("build_src_filter", "")
+            f_usb = sec.get("env:esp32dev_usb", {}).get("build_src_filter", "")
+            with tempfile.TemporaryDirectory() as tmpd:
+                for name in ("esp32_cup_filler.ino", "esp32_cup_filler.ino.cpp",
+                             "esp32_cup_filler_usb.cpp", "config.h", "protocol.h"):
+                    open(os.path.join(tmpd, name), "w").close()
+                sel_uart = match_src_files(tmpd, f_uart, _exts)
+                sel_usb = match_src_files(tmpd, f_usb, _exts)
+            check(sel_uart == ["esp32_cup_filler.ino.cpp"] and sel_usb == ["esp32_cup_filler_usb.cpp"],
+                  "build_src_filter: esp32dev build bản .ino, esp32dev_usb build file mới (1 setup/loop)",
+                  "esp32dev=%s / esp32dev_usb=%s" % (sel_uart, sel_usb))
+        except Exception as exc:                              # pragma: no cover
+            check(False, "kiểm tra build_src_filter bằng chính platformio.fs", str(exc)[:200])
+
+    # ---- mô phỏng bước PlatformIO sinh prototype cho .ino (nếu máy có PlatformIO) ----
     if not has_pio:
         print("   (không có PlatformIO trên máy này -> bỏ qua bước chuyển .ino -> .cpp)")
     else:
@@ -665,6 +707,26 @@ def test_firmware(use_cpp: bool = True) -> None:
     if proc.returncode == 0:
         check("warning:" not in (proc.stderr or ""), "không có cảnh báo biên dịch",
               (proc.stderr or "")[:200])
+
+    # ---- file mới, biên dịch ĐÚNG như hai env sẽ biên dịch nó ----
+    incs = ["-I", stub, "-I", os.path.join(ROOT, "firmware", "esp32_cup_filler"),
+            "-I", os.path.join(ROOT, "firmware", "host_test")]
+    with tempfile.TemporaryDirectory() as tmpd:
+        o_usb = os.path.join(tmpd, "usb.o")
+        r_usb = subprocess.run([gxx, "-std=c++11", "-O2", "-Wall", "-DCUP_USB_LINK=1",
+                                "-c", "-o", o_usb, usb_cpp] + incs,
+                               capture_output=True, text=True)
+        have_main = os.path.exists(o_usb) and b" T " in subprocess.run(
+            ["nm", o_usb], capture_output=True).stdout
+        check(r_usb.returncode == 0 and "warning:" not in (r_usb.stderr or "") and have_main,
+              "esp32_cup_filler_usb.cpp + CUP_USB_LINK biên dịch sạch và có setup()/loop()",
+              (r_usb.stderr or "")[-200:])
+        o_off = os.path.join(tmpd, "off.o")
+        r_off = subprocess.run([gxx, "-std=c++11", "-O2", "-Wall", "-c", "-o", o_off, usb_cpp] + incs,
+                               capture_output=True, text=True)
+        n_sym = len(subprocess.run(["nm", o_off], capture_output=True).stdout.splitlines())
+        check(r_off.returncode == 0 and n_sym == 0,
+              "không bật CUP_USB_LINK -> file mới rỗng (env esp32dev/Arduino IDE không bị ảnh hưởng)")
 
 
 
@@ -962,6 +1024,25 @@ def test_fwrun() -> None:
         check(n_usb > 30 and dec_usb.n_bad_crc == 0,
               "chế độ cổng USB: firmware vẫn phát gói đúng chuẩn qua cổng USB",
               "%d gói, bad_crc=%d" % (n_usb, dec_usb.n_bad_crc))
+
+    # ---- chạy lại TOÀN BỘ kịch bản qua ĐÚNG file mà env esp32dev_usb biên dịch ----
+    # (-DCUP_HIL_VIA_WRAPPER: harness nạp esp32_cup_filler_usb.cpp thay vì .ino)
+    run_w, out_w = build_and_run(["-DCUP_HIL_VIA_WRAPPER=1", "-DCUP_USB_LINK=1"],
+                                 "file mới esp32_cup_filler_usb.cpp (bản qua cáp USB)")
+    if run_w is not None:
+        checks_w = [l for l in out_w.splitlines() if l.startswith("CHECK ")]
+        bad_w = [l for l in checks_w if l.startswith("CHECK FAIL")]
+        check(len(checks_w) >= 45 and not bad_w,
+              "file mới (bản cáp USB): cả %d bài kiểm tra firmware đều đạt" % len(checks_w),
+              " | ".join(bad_w[:2]))
+        dec_w = P.FrameDecoder()
+        n_w = 0
+        for l in out_w.splitlines():
+            if l.startswith("TX "):
+                n_w += len(dec_w.feed(bytes.fromhex(l[3:].strip())))
+        check(n_w > 30 and dec_w.n_bad_crc == 0,
+              "file mới (bản cáp USB): vẫn phát gói đúng chuẩn qua cổng USB của board",
+              "%d gói, bad_crc=%d" % (n_w, dec_w.n_bad_crc))
 
     # ---- gói PC->ESP do bài test C++ sinh ra phải khớp bộ mã hoá của Python ----
     # Mỗi gói được giải mã rồi MÃ HOÁ LẠI bằng protocol.py; hai bộ mã hoá (C++ và Python)

@@ -33,11 +33,20 @@
 #include <vector>
 
 #include "arduino_stub.h"
-#include "config.h"
-#include "protocol.h"
 
 // ---- nạp thẳng firmware cần kiểm tra --------------------------------------
+// Mặc định: bản UART2 (esp32_cup_filler.ino).
+// Với -DCUP_HIL_VIA_WRAPPER=1: nạp ĐÚNG file mà env esp32dev_usb biên dịch
+// (esp32_cup_filler_usb.cpp - bản nói chuyện qua cáp USB của board). Khi đó KHÔNG
+// include config.h/protocol.h ở đây vì chính file kia include chúng, và nó bật
+// UART_USE_USB_SERIAL TRƯỚC khi config.h được đọc (nhờ vậy các #if bên dưới thấy đúng).
+#ifdef CUP_HIL_VIA_WRAPPER
+#include "../esp32_cup_filler/esp32_cup_filler_usb.cpp"
+#else
+#include "config.h"
+#include "protocol.h"
 #include "../esp32_cup_filler/esp32_cup_filler.ino"
+#endif
 
 static int g_ok = 0, g_fail = 0;
 

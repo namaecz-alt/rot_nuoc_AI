@@ -162,10 +162,26 @@ Thư mục `firmware/` **đã là một project PlatformIO hoàn chỉnh** (`pla
    * **`esp32dev`** – mặc định: ESP nói chuyện với PC qua UART2 (GPIO16/17) + mạch USB-TTL,
      còn cổng USB của board dùng để xem log.
    * **`esp32dev_usb`** – khi **không có mạch USB-TTL**: ESP nói chuyện với PC bằng chính
-     cổng USB của board (firmware đã bật `UART_USE_USB_SERIAL=1` và tắt log cho khỏi lẫn gói tin).
+     cổng USB của board. Env này biên dịch **file mới `esp32_cup_filler_usb.cpp`**, trong đó
+     bật `UART_USE_USB_SERIAL=1` + `DEBUG_SERIAL=0` rồi `#include` bản `.ino` cũ — nên
+     **mọi gói tin (HELLO, CUP_OK, AUDIO, PRESS_BUTTON...) đều đi bằng `Serial.write()`**
+     và bạn không cần mạch chuyển đổi USB-TTL.
 4. Bấm **✓ Build** rồi **→ Upload**. Xem log: biểu tượng **phích cắm** (Serial Monitor) –
    `esp32dev`: 115200 baud · `esp32dev_usb`: 921600 baud và **đừng mở khi đang chạy
    phần mềm PC** (mở là board bị reset + nhiễu gói tin).
+
+**Hai bản firmware – cùng một mã nguồn:**
+
+| Chọn env | File được biên dịch | Kênh nói chuyện với PC | Cần gì thêm |
+|---|---|---|---|
+| `esp32dev` (mặc định) | `esp32_cup_filler.ino` (file cũ, giữ nguyên) | UART2 – GPIO16 (RX) / GPIO17 (TX), 921600 baud | mạch USB-TTL (CH340/CP2102/FT232) |
+| `esp32dev_usb` | `esp32_cup_filler_usb.cpp` (file mới) | cổng USB có sẵn trên board (CH340/CP2102), 921600 baud | **không cần gì** – chỉ cáp USB |
+
+Hai bản **không phải hai bản sao**: file mới chỉ bật 2 macro rồi `#include` file `.ino` cũ,
+nên sửa code chỉ sửa **một chỗ** (`esp32_cup_filler.ino` + các `.h`) và cả hai bản cùng đổi.
+`platformio.ini` dùng `build_src_filter` để mỗi env chỉ biên dịch **một** bản (không bị
+trùng `setup()`/`loop()`). Phía PC không đổi gì: `python3 tools/web.py --port COM5`
+(cổng COM của board khi cắm cáp USB - xem trong Device Manager).
 
 Lệnh tương đương trong terminal VS Code:
 
@@ -185,13 +201,18 @@ Vài lưu ý khi dùng PlatformIO:
   (nó chuyển `.ino` → `.cpp` để sinh prototype cho `setup()`, `loop()`...). File này đã
   được `.gitignore` bỏ qua — **đừng sửa tay**, sửa code trong `.ino` và các `.h`.
 * `pio device monitor` ở env `esp32dev_usb` sẽ làm board reset và hiện dữ liệu nhị phân —
-  đó là kênh dữ liệu 921600, không phải log.
+  đó là kênh dữ liệu 921600, không phải log (bản này tắt log để không lẫn vào gói tin).
+* Ở env `esp32dev_usb`, file `.cpp` do PlatformIO sinh ra từ `.ino` bị `build_src_filter`
+  loại bỏ, chỉ file `esp32_cup_filler_usb.cpp` được biên dịch. Đừng xoá dòng
+  `build_src_filter` trong `platformio.ini`, nếu không sẽ có **hai** `setup()`/`loop()`.
 * Bộ test trên PC cũng kiểm tra luôn file `platformio.ini`, `.vscode/`, và **mô phỏng đúng
   bước sinh prototype của PlatformIO** rồi biên dịch file `.cpp` đó (nếu máy có cài
   PlatformIO): `python3 tools/test_comms.py --only firmware`.
 
 Nếu vẫn thích nạp bằng Arduino IDE thì dùng hướng dẫn ở §3 phía trên (Board: **ESP32 Dev
-Module** — cùng một board, hai cách nạp, dùng chung `config.h`).
+Module** — cùng một board, hai cách nạp, dùng chung `config.h`). Với Arduino IDE, muốn dùng
+cáp USB thay cho mạch USB-TTL thì sửa **trực tiếp `config.h`**: `UART_USE_USB_SERIAL 1` và
+`DEBUG_SERIAL 0` (file `esp32_cup_filler_usb.cpp` chỉ có tác dụng khi build bằng PlatformIO).
 
 > Firmware chỉ dùng `Arduino.h` + thư viện chuẩn của core ESP32. Nếu bạn đổi `MIC_TYPE` sang **2**
 > (mic I2S), một số bản core ESP32 3.x mới đã bỏ `driver/i2s.h` — khi đó hãy để `MIC_TYPE 1`
@@ -215,7 +236,7 @@ Toàn bộ thông số "phải chỉnh theo máy thật" nằm trong **`firmware
 | `FLOW_ML_PER_S` | lưu lượng bơm thật (ml/s) khi 100 % | **hiệu chuẩn** theo §5 |
 | `MAX_FILL_ML` | trần tuyệt đối, ESP tự ngắt | an toàn |
 | `LINK_TIMEOUT_MS` | mất UART bao lâu thì ngắt bơm | an toàn |
-| `UART_USE_USB_SERIAL` | `1` = dùng luôn cổng USB của board làm kênh nối PC (không cần USB-TTL) | khi không có mạch USB-TTL — xem §3b |
+| `UART_USE_USB_SERIAL` | `1` = dùng luôn cổng USB của board làm kênh nối PC (không cần USB-TTL). Env `esp32dev_usb` tự bật macro này trong `esp32_cup_filler_usb.cpp` | khi không có mạch USB-TTL — xem §3b |
 | `DEBUG_SERIAL` | `1` = in log ra cổng USB để xem trên Serial Monitor | phải để `0` nếu `UART_USE_USB_SERIAL 1` |
 
 Sau khi sửa `config.h` → nạp lại. Chạy `python3 tools/test_comms.py --only firmware` trên PC sẽ
@@ -347,7 +368,7 @@ Bộ kiểm tra trên PC đối chiếu **từng byte** giữa C++ trong firmwar
 các kịch bản (khoá nút → CUP_OK → bơm → nhấc cốc → ngắt bơm):
 
 ```bash
-python3 tools/test_comms.py                 # toàn bộ (169 bài)
+python3 tools/test_comms.py                 # toàn bộ (177 bài)
 python3 tools/test_comms.py --only firmware # chỉ phần config/sketch
 python3 tools/test_comms.py --only fwrun    # CHẠY THẬT firmware trên PC (máy ảo mini)
 ```
