@@ -558,13 +558,18 @@ def test_firmware(use_cpp: bool = True) -> None:
     check(int(define_us("BUTTON_ESTOP_MS", "0")) > int(define_us("BUTTON_LONG_MS", "0")),
           "giữ nút 2 s = dừng khẩn cấp (lâu hơn ngưỡng chọn mức)")
 
-    # ---- project VS Code + PlatformIO (platformio.ini) ----
-    pio_path = os.path.join(ROOT, "firmware", "platformio.ini")
+    # ---- PROEJCT VS CODE + PLATFORMIO: thư mục cup_filler_pc/serial_esp32/ ----
+    proj_dir = os.path.join(ROOT, "serial_esp32")
+    pio_path = os.path.join(proj_dir, "platformio.ini")
     pio = open(pio_path, encoding="utf-8").read() if os.path.exists(pio_path) else ""
-    check(bool(pio), "có firmware/platformio.ini để mở bằng VS Code + PlatformIO", pio_path)
+    check(os.path.isdir(proj_dir) and bool(pio),
+          "có thư mục serial_esp32/ chứa platformio.ini để mở bằng VS Code + PlatformIO", pio_path)
     if pio:
-        check(re.search(r"^\s*src_dir\s*=\s*esp32_cup_filler\s*(;.*)?$", pio, re.M) is not None,
-              "platformio.ini trỏ src_dir vào thư mục chứa esp32_cup_filler.ino")
+        m = re.search(r"^\s*src_dir\s*=\s*(\S.*?)\s*$", pio, re.M)
+        src = (m.group(1) if m else "").replace("${PROJECT_DIR}", proj_dir)
+        check(os.path.normpath(src) == os.path.normpath(os.path.join(ROOT, "firmware",
+                                                                    "esp32_cup_filler")),
+              "platformio.ini trỏ src_dir vào firmware/esp32_cup_filler (không copy mã nguồn)", src)
         check(re.search(r"^\s*board\s*=\s*esp32dev\s*(;.*)?$", pio, re.M) is not None,
               "platformio.ini dùng board esp32dev = ESP32 DevKit V1")
         check(re.search(r"^\s*framework\s*=\s*arduino\s*(;.*)?$", pio, re.M) is not None,
@@ -576,12 +581,17 @@ def test_firmware(use_cpp: bool = True) -> None:
         check("-DCUP_USB_LINK=1" in pio,
               "env esp32dev_usb bật CUP_USB_LINK -> biên dịch file mới esp32_cup_filler_usb.cpp")
         for f in ("extensions.json", "settings.json"):
-            check(os.path.exists(os.path.join(ROOT, "firmware", ".vscode", f)),
-                  "có firmware/.vscode/%s cho VS Code" % f)
+            check(os.path.exists(os.path.join(proj_dir, ".vscode", f)),
+                  "có serial_esp32/.vscode/%s cho VS Code" % f)
 
-    # ---- file riêng cho PHẦN GIAO TIẾP SERIAL (serial_link.h) ----
-    sl_path = os.path.join(ROOT, "firmware", "esp32_cup_filler", "serial_link.h")
-    check(os.path.exists(sl_path), "có file riêng serial_link.h cho phần giao tiếp với PC")
+    # ---- file riêng cho PHẦN GIAO TIẾP SERIAL (serial_esp32/include/serial_link.h) ----
+    sl_path = os.path.join(proj_dir, "include", "serial_link.h")
+    check(os.path.exists(sl_path),
+          "có file riêng serial_esp32/include/serial_link.h cho phần giao tiếp với PC")
+    sl_shim = os.path.join(ROOT, "firmware", "esp32_cup_filler", "serial_link.h")
+    shim = open(sl_shim, encoding="utf-8").read() if os.path.exists(sl_shim) else ""
+    check("serial_esp32/include/serial_link.h" in shim,
+          "sketch còn cầu nối serial_link.h -> serial_esp32/include (Arduino IDE vẫn biên dịch được)")
     sl = open(sl_path, encoding="utf-8").read() if os.path.exists(sl_path) else ""
     if sl:
         check("UART_USE_USB_SERIAL" in sl and "Serial2" in sl and "return Serial;" in sl,
@@ -663,8 +673,9 @@ def test_firmware(use_cpp: bool = True) -> None:
                 return cmd
 
             def Execute(self, cmd):
-                return subprocess.call(cmd.replace("$CXX", "g++ -std=c++11 -w -I %s -I %s"
-                                                   % (os.path.join(ROOT, "firmware", "esp32_cup_filler"),
+                return subprocess.call(cmd.replace("$CXX", "g++ -std=c++11 -w -I %s -I %s -I %s"
+                                                   % (os.path.join(proj_dir, "include"),
+                                                      os.path.join(ROOT, "firmware", "esp32_cup_filler"),
                                                       os.path.join(ROOT, "firmware", "host_test",
                                                                    "arduino_stub"))),
                                        shell=True) == 0
@@ -679,6 +690,7 @@ def test_firmware(use_cpp: bool = True) -> None:
                   "PlatformIO chuyển .ino -> .cpp có sinh prototype đầy đủ (setup/loop/...)")
             obj = os.path.join(tempfile.gettempdir(), "pio_ino_check.o")
             r = subprocess.run(["g++", "-std=c++11", "-O2", "-Wall", "-c", "-o", obj, cpp,
+                                "-I", os.path.join(proj_dir, "include"),
                                 "-I", os.path.join(ROOT, "firmware", "esp32_cup_filler"),
                                 "-I", os.path.join(ROOT, "firmware", "host_test"),
                                 "-I", os.path.join(ROOT, "firmware", "host_test", "arduino_stub")],
@@ -720,7 +732,8 @@ def test_firmware(use_cpp: bool = True) -> None:
         return
     stub = os.path.join(ROOT, "firmware", "host_test", "arduino_stub")
     proc = subprocess.run([gxx, "-std=c++11", "-Wall", "-fsyntax-only",
-                           "-I", stub, "-I", os.path.join(ROOT, "firmware", "esp32_cup_filler"),
+                           "-I", os.path.join(proj_dir, "include"), "-I", stub,
+                           "-I", os.path.join(ROOT, "firmware", "esp32_cup_filler"),
                            "-x", "c++", ino], capture_output=True, text=True)
     check(proc.returncode == 0, "esp32_cup_filler.ino biên dịch sạch (g++ + Arduino giả lập)",
           (proc.stderr or "")[-300:])
@@ -729,7 +742,8 @@ def test_firmware(use_cpp: bool = True) -> None:
               (proc.stderr or "")[:200])
 
     # ---- file mới, biên dịch ĐÚNG như hai env sẽ biên dịch nó ----
-    incs = ["-I", stub, "-I", os.path.join(ROOT, "firmware", "esp32_cup_filler"),
+    incs = ["-I", os.path.join(proj_dir, "include"), "-I", stub,
+            "-I", os.path.join(ROOT, "firmware", "esp32_cup_filler"),
             "-I", os.path.join(ROOT, "firmware", "host_test")]
     with tempfile.TemporaryDirectory() as tmpd:
         o_usb = os.path.join(tmpd, "usb.o")
@@ -863,13 +877,14 @@ def test_fwrun() -> None:
     inc_fw = os.path.join(ROOT, "firmware", "esp32_cup_filler")
     inc_host = os.path.join(ROOT, "firmware", "host_test")
     inc_stub = os.path.join(ROOT, "firmware", "host_test", "arduino_stub")
+    inc_serial = os.path.join(ROOT, "serial_esp32", "include")   # serial_link.h (giao tiếp PC)
 
     def build_and_run(flags, label):
         """Biên dịch + chạy bộ test firmware với một cấu hình chân/kênh cho trước."""
         with tempfile.TemporaryDirectory() as tmp:
             exe = os.path.join(tmp, "fwrun")
             proc = subprocess.run([gxx, "-std=c++11", "-O2", "-Wall"] + flags +
-                                  ["-I", inc_fw, "-I", inc_host, "-I", inc_stub,
+                                  ["-I", inc_serial, "-I", inc_fw, "-I", inc_host, "-I", inc_stub,
                                    "-o", exe, src, stub, "-lm"],
                                   capture_output=True, text=True, timeout=300)
             warn = [l for l in (proc.stderr or "").splitlines() if "warning:" in l]

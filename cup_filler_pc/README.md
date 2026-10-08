@@ -45,14 +45,15 @@ pip install -r requirements_pc.txt                    # đã thêm pyserial
 python3 tools/esp_cli.py --port sim --demo            # kịch bản: đặt cốc → xác nhận → bấm nút → rót 200 ml
 python3 tools/run_pc.py --port sim --synthetic --demo  # cả hệ thống, 10 bước, không cần màn hình
 python3 tools/web.py --port sim                         # web UI chế độ ESP32 (mở trình duyệt, tự chạy)
-python3 tools/test_comms.py                           # 182 bài tự kiểm chứng (giao thức, C++, luồng, firmware chạy thật trên PC, web)
+python3 tools/test_comms.py                           # 183 bài tự kiểm chứng (giao thức, C++, luồng, firmware chạy thật trên PC, web)
 ```
 
-**Nạp firmware ESP32 (VS Code + PlatformIO):** mở thư mục `cup_filler_pc/firmware` bằng VS Code
-(đã có sẵn `platformio.ini`), chọn môi trường `esp32dev` rồi bấm **→ Upload**. **Không có mạch
-USB-TTL** thì chọn `esp32dev_usb`: env này biên dịch file `esp32_cup_filler_usb.cpp` để ESP nói
-chuyện với PC bằng chính cáp USB của board (`Serial.write()`, không cần linh kiện nào thêm).
-Chi tiết: `firmware/README.md` §3.
+**Nạp firmware ESP32 (VS Code + PlatformIO):** mở thư mục **`cup_filler_pc/serial_esp32`** bằng
+VS Code (project đã có sẵn `platformio.ini`), chọn môi trường `esp32dev` rồi bấm **→ Upload**.
+**Không có mạch USB-TTL** thì chọn `esp32dev_usb`: env này biên dịch file `esp32_cup_filler_usb.cpp`
+để ESP nói chuyện với PC bằng chính cáp USB của board (`Serial.write()`, không cần linh kiện nào
+thêm). Phần giao tiếp serial nằm ở `serial_esp32/include/serial_link.h`. Hướng dẫn đầy đủ:
+`serial_esp32/README.md` và `firmware/README.md` §3.
 
 **Xem/điều khiển từ điện thoại hoặc máy tính (chế độ ESP32):**
 
@@ -179,13 +180,15 @@ cup_filler/
 │   ├── esp_cli.py             # bảng điều khiển ESP32 (thật/giả lập): status, ok, tare, watch
 │   └── web.py                 # giao diện web (--port sim|COM5 để chạy chế độ ESP32)
 │   ├── gen_protocol_vectors.py# sinh lại vector vàng sau khi sửa giao thức
-│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (182 bài, không cần phần cứng)
-├── firmware/                  # FIRMWARE ESP32 - mở bằng VS Code + PlatformIO
+│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (183 bài, không cần phần cứng)
+├── serial_esp32/              # PROJECT VS CODE + PLATFORMIO (mở thư mục này để nạp)
 │   ├── platformio.ini         # 2 môi trường: esp32dev (UART2) / esp32dev_usb (cáp USB)
-│   ├── .vscode/               # gợi ý extension + cấu hình cho VS Code
-│   ├── esp32_cup_filler/      # firmware: logic + driver + giao tiếp PC
-│   │   ├── serial_link.h             # GIAO TIẾP VỚI PC (chọn cổng, gửi/nhận khung)
-│   │   ├── esp32_cup_filler.ino      # logic máy rót - bản UART2 (cần mạch USB-TTL)
+│   ├── include/serial_link.h  # GIAO TIẾP VỚI PC: chọn cổng, gửi/nhận khung gói tin
+│   ├── README.md              # hướng dẫn nạp + lỗi hay gặp
+│   └── .vscode/               # gợi ý extension + cấu hình cho VS Code
+├── firmware/                  # FIRMWARE ESP32 (mã nguồn - PlatformIO trỏ src_dir vào đây)
+│   ├── esp32_cup_filler/      # logic máy rót + driver + config
+│   │   ├── esp32_cup_filler.ino      # logic chính - bản UART2 (cần mạch USB-TTL)
 │   │   ├── esp32_cup_filler_usb.cpp  # bản qua CÁP USB của board - không cần USB-TTL
 │   │   └── config.h, protocol.h, cup_sensor.h, buttons.h, pump.h, voice_mic.h
 │   └── host_test/             # test_protocol.cpp + vector vàng, test_firmware_run.cpp

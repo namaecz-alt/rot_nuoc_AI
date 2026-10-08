@@ -1,5 +1,5 @@
 {
-  "// ghi chú": "Cấu hình gợi ý cho VS Code + PlatformIO của firmware máy rót nước",
+  "// ghi chú": "Cấu hình gợi ý cho VS Code + PlatformIO của firmware máy rót nước (mở thư mục cup_filler_pc/serial_esp32)",
   "files.associations": {
     "*.ino": "cpp",
     "*.h": "cpp"
@@ -9,13 +9,16 @@
     "**/.pio/**": true
   },
   "editor.tabSize": 2,
-  "editor.rulers": [100],
+  "editor.rulers": [
+    100
+  ],
   "files.trimTrailingWhitespace": true,
   "files.insertFinalNewline": true,
   "C_Cpp.default.cppStandard": "c++11",
   "C_Cpp.default.includePath": [
-    "${workspaceFolder}/esp32_cup_filler",
-    "${workspaceFolder}/host_test"
+    "${workspaceFolder}/include",
+    "${workspaceFolder}/../firmware/esp32_cup_filler",
+    "${workspaceFolder}/../firmware/host_test"
   ],
   "terminal.integrated.cwd": "${workspaceFolder}"
 }

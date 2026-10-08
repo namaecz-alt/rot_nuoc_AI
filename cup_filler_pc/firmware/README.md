@@ -113,13 +113,14 @@ LED báo trạng thái: nháy chậm = chờ đặt cốc · **nháy nhanh = ch�
 
 | File | Nội dung |
 |---|---|
-| `esp32_cup_filler/serial_link.h` | **Phần GIAO TIẾP VỚI PC (file riêng)**: chọn cổng (UART2 GPIO16/17 hay cáp USB của board), mở cổng, đóng khung gói tin, gửi mọi loại tin (`link.status()`, `link.error()`, `link.log()`...), đọc byte và tách khung rồi đưa từng khung cho `.ino` (`link.poll()`). Muốn xem/sửa cách ESP nói chuyện với PC thì mở **file này**. |
+| **`cup_filler_pc/serial_esp32/include/serial_link.h`** | **Phần GIAO TIẾP VỚI PC (file riêng, nằm trong thư mục project VS Code + PlatformIO)**: chọn cổng (UART2 GPIO16/17 hay cáp USB của board), mở cổng, đóng khung gói tin, gửi mọi loại tin (`link.status()`, `link.error()`, `link.log()`...), đọc byte và tách khung rồi đưa từng khung cho `.ino` (`link.poll()`). Muốn xem/sửa cách ESP nói chuyện với PC thì mở **file này**. |
 | `esp32_cup_filler/esp32_cup_filler.ino` | Logic của máy: cảm biến cốc, nút bấm, mic, bơm/relay, máy trạng thái, các điều kiện an toàn. Chỉ gọi `link.…` chứ không tự đọc/ghi serial. |
 | `esp32_cup_filler/config.h` | Chân GPIO, tốc độ bơm, preset ml, chọn kênh UART2 hay cáp USB (`UART_USE_USB_SERIAL`)... — **sửa theo máy của bạn**. |
 | `esp32_cup_filler/protocol.h` | Mã hoá/giải mã từng byte của giao thức (khớp với `cupfiller/protocol.py` bên PC). |
 | `esp32_cup_filler/esp32_cup_filler_usb.cpp` | Bản dùng **cáp USB của board**: bật `UART_USE_USB_SERIAL 1` + `DEBUG_SERIAL 0` rồi `#include` file `.ino` ở trên (chọn môi trường `esp32dev_usb`, xem §3). |
 | `esp32_cup_filler/cup_sensor.h`, `buttons.h`, `pump.h`, `voice_mic.h` | Driver: cảm biến siêu âm, 5 nút bấm, bơm qua relay, mic + đếm tiếng động. |
-| `platformio.ini` + `.vscode/` | Cấu hình VS Code + PlatformIO: 2 môi trường `esp32dev` (UART2) và `esp32dev_usb` (cáp USB). |
+| `firmware/esp32_cup_filler/serial_link.h` | Cầu nối 3 dòng trỏ sang file thật ở `serial_esp32/include/` — chỉ để **Arduino IDE** (chỉ tìm file trong thư mục sketch) vẫn biên dịch được. |
+| `cup_filler_pc/serial_esp32/` | **Project VS Code + PlatformIO**: `platformio.ini`, thư mục `include/` (chứa `serial_link.h`), `.vscode/`, README riêng. |
 | `host_test/` | Bộ test chạy trên máy tính: `test_protocol.cpp` (vector vàng) và `test_firmware_run.cpp` (chạy THẬT `.ino` bằng g++, không cần phần cứng). |
 
 ---
@@ -166,11 +167,12 @@ chuyện với phần mềm PC qua chính cổng đó, **không cần thêm linh
 
 ### Nạp bằng VS Code + PlatformIO (khuyến nghị nếu bạn viết code trên VS Code)
 
-Thư mục `firmware/` **đã là một project PlatformIO hoàn chỉnh** (`platformio.ini` +
-`.vscode/`), không cần `pio project init`:
+Project PlatformIO nằm ở thư mục riêng **`cup_filler_pc/serial_esp32/`**
+(`platformio.ini` + `include/serial_link.h` + `.vscode/`), mã nguồn firmware vẫn ở
+`firmware/esp32_cup_filler/` — `platformio.ini` trỏ `src_dir` sang đó nên **không có bản sao nào**:
 
 1. Cài extension **PlatformIO IDE** trong VS Code (`Ctrl+Shift+X` → tìm *PlatformIO IDE*).
-2. `File ▸ Open Folder...` → chọn thư mục **`cup_filler_pc/firmware`** (chính thư mục có
+2. `File ▸ Open Folder...` → chọn thư mục **`cup_filler_pc/serial_esp32`** (chính thư mục có
    `platformio.ini`). PlatformIO sẽ tự tải ESP32 platform + toolchain trong lần build đầu
    (vài trăm MB, chỉ một lần).
 3. Ở **thanh trạng thái dưới cùng**, chọn môi trường:
@@ -210,8 +212,10 @@ pio run -t erase               # xoá flash (khi board "cứng đầu", nạp m�
 
 Vài lưu ý khi dùng PlatformIO:
 
-* Chỉ thư mục **`esp32_cup_filler/`** được build (`src_dir` trong `platformio.ini`),
+* Chỉ thư mục **`firmware/esp32_cup_filler/`** được build (`src_dir` trong `platformio.ini`),
   `host_test/` là bộ test chạy trên máy tính nên **không** bị PlatformIO biên dịch.
+* Phần giao tiếp với PC nằm ở **`serial_esp32/include/serial_link.h`**; PlatformIO tự thêm
+  thư mục `include/` của project vào đường tìm kiếm `#include`.
 * Sau mỗi lần build, PlatformIO sinh file `esp32_cup_filler.ino.cpp` cạnh file `.ino`
   (nó chuyển `.ino` → `.cpp` để sinh prototype cho `setup()`, `loop()`...). File này đã
   được `.gitignore` bỏ qua — **đừng sửa tay**, sửa code trong `.ino` và các `.h`.
@@ -228,6 +232,8 @@ Nếu vẫn thích nạp bằng Arduino IDE thì dùng hướng dẫn ở §3 ph
 Module** — cùng một board, hai cách nạp, dùng chung `config.h`). Với Arduino IDE, muốn dùng
 cáp USB thay cho mạch USB-TTL thì sửa **trực tiếp `config.h`**: `UART_USE_USB_SERIAL 1` và
 `DEBUG_SERIAL 0` (file `esp32_cup_filler_usb.cpp` chỉ có tác dụng khi build bằng PlatformIO).
+Chi tiết về project VS Code + PlatformIO (chọn môi trường, sửa file serial, lỗi hay gặp):
+`cup_filler_pc/serial_esp32/README.md`.
 
 > Firmware chỉ dùng `Arduino.h` + thư viện chuẩn của core ESP32. Nếu bạn đổi `MIC_TYPE` sang **2**
 > (mic I2S), một số bản core ESP32 3.x mới đã bỏ `driver/i2s.h` — khi đó hãy để `MIC_TYPE 1`
@@ -383,7 +389,7 @@ Bộ kiểm tra trên PC đối chiếu **từng byte** giữa C++ trong firmwar
 các kịch bản (khoá nút → CUP_OK → bơm → nhấc cốc → ngắt bơm):
 
 ```bash
-python3 tools/test_comms.py                 # toàn bộ (182 bài)
+python3 tools/test_comms.py                 # toàn bộ (183 bài)
 python3 tools/test_comms.py --only firmware # chỉ phần config/sketch
 python3 tools/test_comms.py --only fwrun    # CHẠY THẬT firmware trên PC (máy ảo mini)
 ```
@@ -402,8 +408,8 @@ ngược vào `cupfiller/protocol.py` để giải mã — PCM của mic còn đ
 PC nhận dạng lại. Biên dịch tay:
 
 ```bash
-g++ -std=c++11 -O2 -I firmware/esp32_cup_filler -I firmware/host_test \
-    -I firmware/host_test/arduino_stub -o /tmp/fwrun \
+g++ -std=c++11 -O2 -I serial_esp32/include -I firmware/esp32_cup_filler \
+    -I firmware/host_test -I firmware/host_test/arduino_stub -o /tmp/fwrun \
     firmware/host_test/test_firmware_run.cpp firmware/host_test/arduino_stub/instances.cpp -lm
 /tmp/fwrun          # in CHECK OK/FAIL, TX..., RESULT <đạt> <lỗi>
 ```

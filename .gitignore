@@ -32,6 +32,6 @@ runs/
 .DS_Store
 Thumbs.db
 
-# (ngoại lệ) cấu hình VS Code + PlatformIO: giữ lại để mở thư mục firmware là chạy được
-!cup_filler_pc/firmware/.vscode/
-!cup_filler_pc/firmware/.vscode/**
+# (ngoại lệ) cấu hình VS Code + PlatformIO: giữ lại để mở thư mục serial_esp32 là chạy được
+!cup_filler_pc/serial_esp32/.vscode/
+!cup_filler_pc/serial_esp32/.vscode/**
