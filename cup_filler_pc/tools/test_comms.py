@@ -238,10 +238,12 @@ def test_voice() -> None:
 class Harness:
     """Ghép ESP32 giả lập với EspBridge thật (không cần phần cứng)."""
 
-    def __init__(self, pc_controls: bool = False, auto_confirm: bool = True, **sim_kw):
+    def __init__(self, pc_controls: bool = False, auto_confirm: bool = True,
+                 pc_auto_start: bool = True, **sim_kw):
         cfg = load_config(None)               # dùng DEFAULTS của cupfiller.config
         cfg.set("esp.port", "sim")
         cfg.set("esp.pc_controls_pump", pc_controls)
+        cfg.set("esp.pc_auto_start_on_button", pc_auto_start)
         cfg.set("control.loop.fps", 20)
         self.cfg = cfg
         sim_kw.setdefault("presets", tuple(cfg.get("control.presets_ml")))
@@ -392,7 +394,21 @@ def test_flow() -> None:
     h.sim.press_button(3)                          # 250 ml
     h.step(0.3)
     check(h.got(P.Msg.PRESET_SELECTED), "nút bấm -> ESP báo PRESET_SELECTED")
-    check(not h.sim.relay_on, "chế độ PC: ESP KHÔNG tự bật bơm khi bấm nút")
+    sent1 = [int(f.msg) for f in h.bridge.link.sent]
+    check(int(P.Msg.START_FILL) in sent1 and h.sim.fill_mode == int(P.FillMode.PC_CLOSED_LOOP),
+          "chế độ PC: nút chỉ BÁO mức, PC ra lệnh rót (START_FILL vòng kín thị giác)",
+          "ml=%.0f mode=%d" % (h.sim.target_ml, h.sim.fill_mode))
+    # ... và ESP thì KHÔNG tự bật bơm (tắt tự-động-rót của PC -> không có lệnh nào)
+    h2 = Harness(pc_controls=True, pc_auto_start=False)
+    h2.step(0.6)
+    h2.sim.place_cup(88)
+    h2.until(lambda: h2.sim.pc_confirmed)
+    h2.sim.press_button(3)
+    h2.step(0.3)
+    sent2 = [int(f.msg) for f in h2.bridge.link.sent]
+    check(h2.got(P.Msg.PRESET_SELECTED) and int(P.Msg.START_FILL) not in sent2
+          and not h2.sim.relay_on,
+          "chế độ PC: ESP KHÔNG tự bật bơm khi bấm nút (chờ lệnh PC)")
     h.bridge.start_fill(250, mode=P.FillMode.PC_CLOSED_LOOP)
     h.until(lambda: h.got(P.Msg.FILL_STARTED))
     check(h.sim.relay_on and h.sim.fill_mode == int(P.FillMode.PC_CLOSED_LOOP),
@@ -1318,6 +1334,244 @@ def test_model() -> None:
               "model gốc là yolov8n.pt (bản nano, chạy nhẹ trên PC)")
     except Exception as exc:                                  # pragma: no cover
         check(False, "đọc checkpoint model mức nước", str(exc)[:200])
+
+    # ---- logic dải mực nước -> ml (không cần torch) ----
+    try:
+        import types as _types
+        from cupfiller.level_yolo import (LEVEL_BANDS, LEVEL_ORDER, WaterLevelDetector,
+                                          ml_at_frac)
+        cup = _types.SimpleNamespace(cup_height_mm=100.0, r_base_mm=25.0, r_rim_mm=35.0)
+        cap = ml_at_frac(1.0, cup)
+        ml30, ml60, ml90 = ml_at_frac(0.30, cup), ml_at_frac(0.60, cup), ml_at_frac(0.90, cup)
+        check(abs(cap - 285.4) < 1.0 and ml30 < ml60 < ml90 < cap,
+              "dải mực nước đổi ra ml theo đúng hình học cốc (nón cụt)",
+              "cốc 100mm: 30%%=%.0f ml, 60%%=%.0f ml, 90%%=%.0f ml, đầy=%.0f ml"
+              % (ml30, ml60, ml90, cap))
+        check(list(LEVEL_ORDER) == ["0-", "30-", "60-", "90-"] and
+              LEVEL_BANDS["90-"] == (0.90, 1.00),
+              "thứ tự 4 mức: 0- (dưới 30%) / 30- / 60- / 90- (trên 90%)")
+
+        # model giả: ưu tiên conf cao nhất, ưu tiên hộp nằm trong cốc
+        boxes = [("0-", 0.9, (0, 0, 10, 10)), ("30-", 0.5, (120, 150, 200, 260))]
+        det = WaterLevelDetector(cfg=None, predictor=lambda f: boxes)
+        r = det.detect("khung")
+        check(r is not None and r.label == "0-" and abs(r.conf - 0.9) < 1e-6,
+              "detector chọn hộp có conf cao nhất", r.text() if r else "None")
+        r2 = det.detect("khung", cup_box=(100, 100, 300, 400))
+        check(r2 is not None and r2.label == "30-",
+              "detector ưu tiên hộp nằm TRONG vùng cốc", r2.text() if r2 else "None")
+        det_bad = WaterLevelDetector(cfg=None, predictor=lambda f: [("meo", 0.9, (1, 1, 2, 2))])
+        check(det_bad.detect("khung") is None and "lớp lạ" in det_bad.last_error,
+              "gặp lớp không phải mực nước -> bỏ qua (không làm hỏng vòng rót)")
+
+        # cách ngắt bơm: "mid" (vào dải chứa mức) vs "lo" (chắc chắn đã qua mức)
+        det.last = None
+        det2 = WaterLevelDetector(cfg=None, predictor=lambda f: [("30-", 0.8, (1, 1, 2, 2))])
+        r30 = det2.detect("khung")
+        check(det2.reached(100.0, cup, r30, mode="mid") and
+              not det2.reached(100.0, cup, r30, mode="lo"),
+              "cách ngắt 'mid' dừng khi vào dải mức (chọn 100 ml -> thấy mức 30- là tới), "
+              "'lo' thận trọng hơn", "%s vs %s" % (det2.reached(100.0, cup, r30, mode="mid"),
+                                                  det2.reached(100.0, cup, r30, mode="lo")))
+        check(not det2.reached(300.0, cup, r30, mode="mid") and
+              not det2.reached(300.0, cup, r30, mode="lo"),
+              "mức đích 300 ml (quá sức cốc 285 ml) -> model KHÔNG cho ngắt",
+              "mid=%s lo=%s" % (det2.reached(300.0, cup, r30, mode="mid"),
+                                det2.reached(300.0, cup, r30, mode="lo")))
+        det3 = WaterLevelDetector(cfg=None, predictor=lambda f: [("90-", 0.9, (1, 1, 2, 2))])
+        r90 = det3.detect("khung")
+        check(det3.reached(250.0, cup, r90, mode="mid") and
+              not det3.reached(283.0, cup, r90, mode="lo"),
+              "mức 90- (trên 90%) ngắt khi chọn 250 ml; mức 283 ml thì 'lo' còn thận trọng",
+              "mid=%s lo=%s" % (det3.reached(250.0, cup, r90, mode="mid"),
+                                det3.reached(283.0, cup, r90, mode="lo")))
+        check(not det2.reached(100.0, cup, r30, mode="ml"),
+              "chế độ 'ml' -> tắt ngắt theo model (vẫn đong theo lưu lượng như cũ)")
+        off = WaterLevelDetector(cfg=None, predictor=lambda f: boxes, enabled=False)
+        check(not off.available, "vision.level_enable=false -> model tự tắt, không ảnh hưởng gì")
+
+        # ---- VÒNG RÓT THẬT: PC điều khiển bơm, model quyết định ngừng bơm ----
+        import numpy as np
+        from cupfiller.config import load_config as _load
+        from cupfiller.controller import FillController, State
+        from cupfiller.detection import CupDetection
+
+        cfg2 = _load(None)
+        cfg2.set("control.level.stop_rule", "mid")
+        cfg2.set("control.level.check_period_ms", 100)
+
+        class _Cam:
+            def read(self):
+                return True, np.zeros((480, 640, 3), np.uint8)
+
+            def release(self):
+                pass
+
+        class _Pump:
+            lag_s, min_pwm, max_pwm = 0.2, 0.30, 1.0
+
+            def __init__(self):
+                self.pwm = 0.0
+
+            def flow_at(self, pwm):
+                return 40.0 * float(pwm)
+
+            def pwm_for_flow(self, ml_s):
+                return min(1.0, max(self.min_pwm, float(ml_s) / 40.0))
+
+            def set_pwm(self, p):
+                self.pwm = max(0.0, min(1.0, float(p)))
+
+            def off(self):
+                self.pwm = 0.0
+
+        class _CupDet:
+            def detect(self, frame, prev=None):
+                return CupDetection(found=True, x0=120, y0=100, x1=320, y1=420,
+                                    r_base_mm=25.0, r_rim_mm=35.0, cup_height_mm=100.0,
+                                    confidence=0.9)
+
+        sim = {"ml": 0.0}                     # nước ĐÃ rót thật vào cốc
+
+        def _frac_for(ml):
+            lo, hi = 0.0, 1.0
+            for _ in range(40):
+                mid = 0.5 * (lo + hi)
+                if ml_at_frac(mid, cup) < ml:
+                    lo = mid
+                else:
+                    hi = mid
+            return 0.5 * (lo + hi)
+
+        def predictor(_frame):
+            f = _frac_for(sim["ml"])
+            for lab, (lo, hi) in LEVEL_BANDS.items():
+                if lo <= f < hi:
+                    return [(lab, 0.9, (150, 200, 300, 260))]
+            return [("90-", 0.9, (150, 200, 300, 260))]
+
+        pump = _Pump()
+        level = WaterLevelDetector(cfg=cfg2, predictor=predictor)
+        ctl = FillController(cfg2, _Cam(), pump, detector=_CupDet(), level_detector=level)
+        ctl.set_preset(100.0)                 # người dùng chọn 100 ml trên ESP
+        ctl.start()
+        dt = 0.05
+        for _ in range(3000):
+            ctl.tick(dt)
+            sim["ml"] += pump.flow_at(pump.pwm) * dt          # nước dâng theo lưu lượng
+            if ctl.state in (State.DONE, State.FAULT):
+                break
+        tel = ctl.telemetry()
+        check(ctl.state == State.DONE and ctl.level_stop,
+              "PC rót -> model thấy nước vào dải mức đã chọn -> NGỪNG BƠM",
+              "state=%s band=%s stop=%s" % (ctl.state.value, tel["level_band"], tel["level_stop"]))
+        check(tel["level_band"] == "30-" and tel["report"].get("stopped_by") == "model_muc_nuoc",
+              "ghi rõ lượt rót dừng vì MODEL mực nước (không phải đong lưu lượng)",
+              str(tel["report"]))
+        check(sim["ml"] < ml_at_frac(0.60, cup),
+              "không rót lố sang dải sau (dừng trong dải đã chọn)",
+              "đã rót %.0f ml / 100 ml đích (dải 30-: %.0f-%.0f ml)"
+              % (sim["ml"], ml_at_frac(0.30, cup), ml_at_frac(0.60, cup)))
+        check(tel["level_ml"] > 0 and tel["level_target_ml"] == 100.0,
+              "telemetry có mực nước model đọc được + mức đích", str(tel["level_ml"]))
+    except Exception as exc:                                     # pragma: no cover
+        import traceback
+        traceback.print_exc()
+        check(False, "kiểm tra logic model mực nước", str(exc)[:200])
+
+    # ---- CẢ PHIÊN với ESP32 GIẢ LẬP: nút trên ESP -> PC rót -> model ngắt bơm ----
+    try:
+        from cupfiller.config import load_config as _load2
+        from cupfiller.session import AutoFillSession as _Sess
+
+        cfg3 = _load2(None)
+        cfg3.set("camera.backend", "synthetic")
+        cfg3.set("esp.port", "sim")
+        cfg3.set("esp.pc_controls_pump", True)      # PC điều khiển bơm (vòng kín thị giác)
+        cfg3.set("esp.recognize_delay_s", 0.0)
+        cfg3.set("esp.recognize_stable_frames", 2)
+        cfg3.set("control.loop.fps", 20)
+        cfg3.set("control.level.check_period_ms", 100)
+        cfg3.set("control.pump.flow_curve", {"pwm": [0.35, 1.0], "ml_per_s": [14.0, 40.0]})
+
+        holder = {}
+
+        def predictor_sim(_frame):
+            """Model giả: nhìn lượng nước ESP báo đã rót -> trả về dải mực nước."""
+            ctl, sim = holder.get("ctl"), holder.get("sim")
+            if ctl is None or sim is None or ctl.g_h <= 0:
+                return []
+            geom = ctl.cup_geom()
+            poured = float(getattr(sim, "poured_ml", 0.0))
+            lo, hi = 0.0, 1.0
+            for _ in range(30):
+                mid = 0.5 * (lo + hi)
+                if ml_at_frac(mid, geom) < poured:
+                    lo = mid
+                else:
+                    hi = mid
+            f = 0.5 * (lo + hi)
+            for lab, (a, b) in LEVEL_BANDS.items():
+                if a <= f < b:
+                    return [(lab, 0.9, (10, 10, 40, 40))]
+            return [("90-", 0.9, (10, 10, 40, 40))]
+
+        det_sim = WaterLevelDetector(cfg=cfg3, predictor=predictor_sim)
+        sess = _Sess(cfg3, level_detector=det_sim, log=lambda m: None)
+        holder["sim"] = sess.bridge.simulator
+        seen = {"vision": None}
+
+        def _tick_until(pred, timeout_s):
+            t0 = time.time()
+            while time.time() - t0 < timeout_s:
+                if pred():
+                    return True
+                holder["ctl"] = sess.ctl
+                if sess.ctl is not None:
+                    seen["vision"] = sess.ctl.telemetry()
+                sess.tick(0.05)
+            return pred()
+
+        sess.tick(0.05)
+        sess.bridge.simulator.place_cup(95)
+        ok = _tick_until(lambda: sess.state == "READY", 8)
+        check(ok, "[ESP32 giả lập] đặt cốc -> PC nhận diện -> CUP_OK -> ESP mở khoá",
+              "state=%s" % sess.state)
+
+        # ESP giả lập cần thêm vài nhịp để ĐỌC CUP_OK qua đường UART (giống bo mạch thật);
+        # chưa đọc được thì ESP coi như chưa mở khoá và sẽ bỏ qua cú bấm nút.
+        for _ in range(4):
+            sess.tick(0.05)
+        check(sess.bridge.simulator.pc_confirmed,
+              "[ESP32 giả lập] ESP nhận CUP_OK qua UART -> mở khoá nút bấm",
+              "pc_confirmed=%s, state=%s" % (sess.bridge.simulator.pc_confirmed,
+                                             sess.bridge.simulator.state_name()))
+
+        # người dùng bấm nút mức 0 trên ESP (100 ml = dải 30-) -> PC rót, model thấy vào dải
+        # thì NGỪNG BƠM trước khi đủ 100 ml theo lưu lượng (đúng yêu cầu: vừa rót vừa kiểm tra mực)
+        sess.bridge.simulator.press_button(0)
+        ok = _tick_until(lambda: (sess.ctl is not None) and
+                         (sess.bridge.status.poured_ml > 0), 10)
+        check(ok, "[ESP32 giả lập] ESP báo mức đã chọn -> PC điều khiển bơm rót nước",
+              "poured=%.0f ml, duty=%d%%" % (sess.bridge.status.poured_ml,
+                                             sess.bridge.simulator.duty_pct))
+        ok = _tick_until(lambda: sess.ctl is None and not sess.bridge.status.pumping, 20)
+        rep = sess.last_pc_report or {}
+        check(ok and rep.get("stopped_by") == "model_muc_nuoc" and
+              str(rep.get("level_band", "")).startswith("30-") and
+              float(rep.get("pumped_ml", 999)) < 95.0,
+              "[ESP32 giả lập] model thấy tới mức -> NGỪNG BƠM -> ESP kết thúc lượt rót",
+              "state=%s stopped_by=%s band=%s duty=%d%%" % (
+                  sess.state, rep.get("stopped_by"), rep.get("level_band"),
+                  sess.bridge.simulator.duty_pct))
+        check(sess.bridge.simulator.duty_pct == 0,
+              "[ESP32 giả lập] relay về 0% sau khi ngừng (an toàn)", 
+              "%d%%" % sess.bridge.simulator.duty_pct)
+        sess.close()
+    except Exception as exc:                                     # pragma: no cover
+        import traceback
+        traceback.print_exc()
+        check(False, "chạy cả phiên với ESP32 giả lập + model mực nước", str(exc)[:200])
 
     # nếu máy có ultralytics thì nạp thật, kiểm tra tên lớp lần nữa
     try:

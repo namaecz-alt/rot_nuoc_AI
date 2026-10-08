@@ -361,7 +361,10 @@ Luồng tự động (`cupfiller/session.py`):
    (có biên an toàn) → gửi `CUP_OK`.
 3. ESP mở khoá nút/mic → người dùng bấm nút (hoặc nói) → ESP gửi `PRESET_SELECTED`.
 4. ESP rót theo ml/s đã hiệu chuẩn (chế độ mặc định) **hoặc** PC điều khiển vòng kín bằng vạch nước
-   (`SET_MODE` + `PUMP_SET`, khi bật `esp.pc_controls_pump`).
+   (`SET_MODE` + `PUMP_SET`, khi bật `esp.pc_controls_pump`). Ở chế độ PC điều khiển, nút bấm chỉ
+   **báo mức** (`PRESET_SELECTED`), PC tự ra lệnh rót (`esp.pc_auto_start_on_button: true`) rồi
+   **vừa rót vừa đọc model mực nước** `weights/muc_nuoc_yolo.pt` để ngắt bơm khi nước vào đúng dải
+   mức đã chọn (`control.level.stop_rule`, báo cáo có `stopped_by: model_muc_nuoc`).
 5. Nhấc cốc → ESP tự ngắt bơm ngay, báo `CUP_REMOVED` → PC đóng camera sau vài chục giây rảnh.
 
 ---
@@ -389,7 +392,7 @@ Bộ kiểm tra trên PC đối chiếu **từng byte** giữa C++ trong firmwar
 các kịch bản (khoá nút → CUP_OK → bơm → nhấc cốc → ngắt bơm):
 
 ```bash
-python3 tools/test_comms.py                 # toàn bộ (189 bài)
+python3 tools/test_comms.py                 # toàn bộ (209 bài)
 python3 tools/test_comms.py --only firmware # chỉ phần config/sketch
 python3 tools/test_comms.py --only fwrun    # CHẠY THẬT firmware trên PC (máy ảo mini)
 ```

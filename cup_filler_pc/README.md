@@ -45,7 +45,7 @@ pip install -r requirements_pc.txt                    # đã thêm pyserial
 python3 tools/esp_cli.py --port sim --demo            # kịch bản: đặt cốc → xác nhận → bấm nút → rót 200 ml
 python3 tools/run_pc.py --port sim --synthetic --demo  # cả hệ thống, 10 bước, không cần màn hình
 python3 tools/web.py --port sim                         # web UI chế độ ESP32 (mở trình duyệt, tự chạy)
-python3 tools/test_comms.py                           # 189 bài tự kiểm chứng (giao thức, C++, luồng, firmware chạy thật trên PC, web, model)
+python3 tools/test_comms.py                           # 209 bài tự kiểm chứng (giao thức, C++, luồng, firmware chạy thật trên PC, web, model)
 python3 tools/test_comms.py --only model              # kiểm tra model mực nước weights/muc_nuoc_yolo.pt
 ```
 
@@ -82,6 +82,52 @@ máy đã cài đúng chưa mà không cần cốc, không cần nước, không
 
 Sơ đồ dây, cách nạp firmware và hiệu chuẩn lưu lượng: **[`firmware/README.md`](firmware/README.md)**.
 Mọi thứ cần chỉnh cho đúng máy của bạn nằm ở **`firmware/esp32_cup_filler/config.h`**.
+
+## 🎚️ Rót theo mức nước bằng model YOLO của bạn (`weights/muc_nuoc_yolo.pt`)
+
+Model 4 lớp **`0-` / `30-` / `60-` / `90-`** cho biết mực nước trong cốc đang ở **dải nào theo
+% chiều cao cốc** (<30 %, 30–60 %, 60–90 %, >90 %). Máy dùng nó đúng theo luồng bạn yêu cầu:
+
+1. **Kiểm tra cốc trước** — ESP báo `CUP_PLACED`, PC mở camera, nhận diện cốc (`CUP_OK`),
+   đọc luôn mực nước hiện có (model) để biết còn rót được bao nhiêu.
+2. **Rót theo mức đã chọn trên ESP** — bấm nút (hoặc nói) trên ESP: ESP gửi `PRESET_SELECTED`;
+   ở chế độ `esp.pc_controls_pump: true` PC **tự ra lệnh rót** (`START_FILL` vòng kín thị giác,
+   tắt bằng `esp.pc_auto_start_on_button: false` nếu chỉ muốn bấm nút báo mức).
+3. **Vừa rót vừa kiểm tra mực nước** — trong lúc bơm chạy, PC đọc model mỗi
+   `control.level.check_period_ms`; khi nước **vào đúng dải của mức đã chọn** thì **ngắt bơm ngay**
+   (relay về 0 %), không chờ đủ ml theo lưu lượng. Hoàn tất ở trạng thái `DONE`, báo cáo có
+   `"stopped_by": "model_muc_nuoc"` (nếu mực không đọc được thì rơi về đo theo lưu lượng,
+   `"stopped_by": "dong_theo_luu_luong"` — không bao giờ rót tràn vì còn chốt `safety.max_volume_ml`).
+
+```yaml
+# config/settings.yaml
+vision:
+  level_enable: true                 # bật model mực nước
+  level_model: weights/muc_nuoc_yolo.pt
+  level_conf: 0.35
+  level_imgsz: 512
+control:
+  level:
+    stop_rule: mid                   # mid = ngắt khi nước VÀO dải của mức đích (mặc định)
+                                     # lo  = chỉ ngắt khi đã tới mép dưới dải (chậm hơn, an toàn)
+                                     # off = chỉ hiện mực, ngắt theo lưu lượng như cũ
+    check_period_ms: 200             # nhịp đọc model trong lúc rót (đỡ nặng CPU)
+    reach_tolerance: 0.0             # cho phép non theo tỉ lệ (0.1 = non tối đa 10%)
+esp:
+  pc_controls_pump: true             # PC điều khiển relay (vòng kín thị giác)
+  pc_auto_start_on_button: true      # bấm nút trên ESP -> PC tự bắt đầu rót
+```
+
+Kiểm tra model trên máy bạn trước khi rót thật:
+
+```bash
+python3 tools/level_check.py --check              # đủ thư viện + file weights chưa?
+python3 tools/level_check.py --image coc.jpg      # in dải mực nước + quy đổi ~ml của 1 ảnh
+python3 tools/level_check.py --camera 0 --seconds 15   # soi trực tiếp webcam (bấm q để thoát)
+```
+
+Ảnh chụp nên có **đèn nền phía sau cốc** như lúc train; nếu model đọc sai dải, tăng `level_conf`
+hoặc chụp lại ảnh đúng điều kiện ánh sáng của máy rồi train thêm.
 
 ## Kết quả tự kiểm chứng (không cần phần cứng, xem `report/`)
 
@@ -159,6 +205,7 @@ cup_filler/
 │   ├── protocol.py            # giao thức UART với ESP32 (đóng/mở khung, CRC-16)
 │   ├── esp_bridge.py          # điều khiển ESP32 từ PC + an toàn liên lạc
 │   ├── esp_sim.py             # ESP32 GIẢ LẬP (chạy toàn luồng, không cần phần cứng)
+│   ├── level_yolo.py          # MODEL MỰC NƯỚC: dải 0-/30-/60-/90- -> mmol/%, ngắt bơm theo dải
 │   ├── serial_link.py         # COM/tcp/loopback/sim
 │   ├── session.py             # phiên tự động: chỉ mở camera khi có cốc
 │   ├── voice_pc.py            # nhận dạng mức nước tiếng Việt (PCM từ ESP32)
@@ -176,6 +223,7 @@ cup_filler/
 │   ├── autolabel.py           # tạo nhãn nháp
 │   ├── train_yolo.py          # fine-tune model của bạn
 │   ├── test_pipeline.py       # tự kiểm chứng CV/controller
+│   ├── level_check.py         # kiểm tra model mực nước trên ảnh/webcam (--check | --image | --camera)
 │   ├── live.py                # live view Pi
 │   ├── calibrate.py           # hiệu chuẩn Pi
 │   ├── web.py                 # giao diện web
@@ -183,7 +231,7 @@ cup_filler/
 │   ├── esp_cli.py             # bảng điều khiển ESP32 (thật/giả lập): status, ok, tare, watch
 │   └── web.py                 # giao diện web (--port sim|COM5 để chạy chế độ ESP32)
 │   ├── gen_protocol_vectors.py# sinh lại vector vàng sau khi sửa giao thức
-│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (189 bài, không cần phần cứng)
+│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (209 bài, không cần phần cứng)
 ├── serial_esp32/              # PROJECT VS CODE + PLATFORMIO (mở thư mục này để nạp)
 │   ├── platformio.ini         # 2 môi trường: esp32dev (UART2) / esp32dev_usb (cáp USB)
 │   ├── include/serial_link.h  # GIAO TIẾP VỚI PC: chọn cổng, gửi/nhận khung gói tin
@@ -258,6 +306,9 @@ Kết quả ghi vào `config/calibration.json`, tự nạp đè lên `settings.y
 | `control.pump.flow_curve` | đường cong lưu lượng hiệu chuẩn |
 | `control.loop.settle_s` | thời gian chờ sóng/bọt lắng trước khi đọc kết quả |
 | `control.loop.max_overfill_mm` | ngưỡng báo OVERFILL (đừng đặt < 4 mm: nhiễu đo ~±2 mm) |
+| `vision.level_enable` | bật model mực nước `weights/muc_nuoc_yolo.pt` (4 dải 0-/30-/60-/90-) |
+| `control.level.stop_rule` | `mid` (mặc định): ngắt bơm khi nước vào dải của mức đích; `lo`: chờ tới mép dưới; `off`: đo theo lưu lượng |
+| `esp.pc_controls_pump` | `true`: PC nhìn camera điều khiển relay (`PUMP_SET`) — cần cho kiểu rót "vừa rót vừa kiểm tra mực" |
 | `safety.max_volume_ml` | chặn tuyệt đối, độc lập với mọi thuật toán |
 
 ## Giới hạn đã biết & hướng nâng cấp

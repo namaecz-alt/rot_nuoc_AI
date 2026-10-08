@@ -70,6 +70,14 @@ control:
     min_pwm: 0.30            # dưới mức này bơm không thắng được áp cột nước
     max_pwm: 1.0
 
+  # model MỰC NƯỚC của bạn (weights/muc_nuoc_yolo.pt) dùng khi PC điều khiển bơm
+  level:
+    stop_rule: "mid"         # mid: dừng khi nước vào dải mức đã chọn (đúng cho vạch 30/60/90)
+                             # lo : chỉ dừng khi chắc chắn đã qua mức (an toàn, có thể dư)
+                             # ml : model chỉ hiển thị, dừng theo đong lưu lượng như cũ
+    check_period_ms: 200     # chạy model mỗi 200 ms trong lúc rót (đỡ nặng CPU)
+    reach_tolerance: 0.0     # cho phép non bao nhiêu (0.0 = không; 0.1 = non tối đa 10%)
+
   loop:
     fps: 15                  # tần suất vòng điều khiển trên Pi 4 (10-20 là đủ)
     settle_s: 1.00           # thời gian chờ mặt nước phẳng lại trước khi đọc
@@ -99,6 +107,14 @@ web:
 #  ESP32 (bo điều khiển phần cứng: cảm biến cốc, nút bấm, mic, relay bơm)
 #  Giao thức UART: xem docs/PROTOCOL.md   -   firmware: firmware/README.md
 # ===========================================================================
+vision:
+  # Model mực nước bạn tự train (YOLOv8n, 4 lớp): "0-" dưới 30% chiều cao cốc,
+  # "30-" 30-60%, "60-" 60-90%, "90-" trên 90%.  Đặt level_enable: false để tắt.
+  level_enable: true
+  level_model: "weights/muc_nuoc_yolo.pt"
+  level_conf: 0.35           # ngưỡng tin cậy của model
+  level_imgsz: 512           # đúng kích thước lúc train
+
 esp:
   port: "sim"                 # sim = ESP32 giả lập | COM5 | /dev/ttyUSB0 | tcp://host:port
   baud: 921600                # phải khớp UART_BAUD trong firmware/esp32_cup_filler/config.h
@@ -116,6 +132,8 @@ esp:
 
   # --- điều khiển bơm ---
   pc_controls_pump: false     # false: ESP tự đong theo ml/s (không cần camera)
+                              # true : PC nhìn camera điều khiển relay (PUMP_SET), cần model/vạch nước
+  pc_auto_start_on_button: true  # (chế độ PC điều khiển) bấm nút trên ESP -> PC tự bắt đầu rót
                               # true : PC nhìn vạch nước rồi điều khiển relay (PUMP_SET)
   min_duty_pct: 8             # duty nhỏ nhất còn bơm được (relay cơ băm chậm)
   default_preset_index: 2     # 0..4 = 100/150/200/250/300 ml

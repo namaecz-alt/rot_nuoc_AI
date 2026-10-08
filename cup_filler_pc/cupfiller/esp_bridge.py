@@ -181,6 +181,11 @@ class EspBridge:
 
         # --- chính sách ---
         self.pc_controls_pump = bool(cfg.get("esp.pc_controls_pump", False) if cfg else False)
+        # Ở chế độ PC điều khiển bơm: ESP chỉ BÁO mức khi bấm nút, PC phải ra lệnh rót.
+        # Bật cờ này (mặc định) để PC tự bắt đầu rót ngay khi ESP báo mức từ NÚT BẤM.
+        self.pc_auto_start_on_button = bool(
+            cfg.get("esp.pc_auto_start_on_button", True) if cfg else True)
+        self._pc_fill_active = False        # PC đang điều khiển một lượt rót của nút bấm
         self.heartbeat_s = float(cfg.get("esp.ping_period_s", 1.0) if cfg else 1.0)
         self.pc_caps = (P.CAP_VISION | P.CAP_CUP_INFO |
                         (P.CAP_VOICE_ASR if self.voice.engine != "none" else 0) |
@@ -312,6 +317,13 @@ class EspBridge:
             self.preset_index, self.preset_ml = idx, ml
             self._emit(name, fields=fields)
             self.log("[ESP] chọn mức %g ml (nguồn: %s)" % (ml, ["nút", "mic", "PC", "auto"][min(src, 3)]))
+            # PC điều khiển bơm: nút trên ESP chỉ báo mức, PC phải ra lệnh rót
+            # (giống hệt hành vi BUTTON_STARTS_POUR của firmware khi ESP tự đong).
+            if (self.pc_controls_pump and self.pc_auto_start_on_button and ml > 0
+                    and src == int(P.Source.BUTTON) and self.status.unlocked
+                    and not self.status.pumping):
+                self.log("[PC] nút ESP chọn %g ml -> PC bắt đầu rót (vòng kín thị giác)" % ml)
+                self.start_fill(ml, mode=P.FillMode.PC_CLOSED_LOOP, source=P.Source.BUTTON)
             return
 
         if msg == P.Msg.FILL_STARTED:

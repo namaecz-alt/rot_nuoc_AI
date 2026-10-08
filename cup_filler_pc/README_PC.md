@@ -172,8 +172,28 @@ bằng `--port sim` (bấm "Đặt cốc" ngay trên web).
 .venv\Scripts\python.exe tools\test_comms.py
 ```
 
-Kết quả mong đợi: `189/189 bài đạt` — kiểm tra khung gói + CRC, đối chiếu firmware C++ với
+Kết quả mong đợi: `209/209 bài đạt` — kiểm tra khung gói + CRC, đối chiếu firmware C++ với
 Python từng byte, đọc số tiếng Việt, luồng đặt cốc → CUP_OK → bấm nút → rót, giao diện web,
-cả chương trình `run_pc.py` thật và cả **firmware được chạy thật trên PC** (nhóm `fwrun`:
+cả chương trình `run_pc.py` thật, **firmware được chạy thật trên PC** (nhóm `fwrun`:
 nút còn khoá thì bấm không ăn, relay tích cực mức CAO, rót đúng ml, nhấc cốc/mất liên lạc/
-quá thể tích/quá thời gian/dừng khẩn cấp/mất cảm biến đều ngắt bơm, chờ `CUP_OK` đúng hạn).
+quá thể tích/quá thời gian/dừng khẩn cấp/mất cảm biến đều ngắt bơm, chờ `CUP_OK` đúng hạn)
+và **model mực nước** (nhóm `model`: dải 0-/30-/60-/90- → ml, ngắt bơm khi nước vào dải đã chọn).
+
+### Rót theo mức nước đã chọn trên ESP (model `weights/muc_nuoc_yolo.pt`)
+
+Model 4 lớp `0-` / `30-` / `60-` / `90-` (mực nước theo **% chiều cao cốc**). Luồng:
+
+1. Đặt cốc → ESP gửi `CUP_PLACED` → PC mở camera, nhận diện cốc → gửi `CUP_OK` → ESP mở khoá nút/mic.
+2. Bấm nút mức (hoặc nói) → ESP gửi `PRESET_SELECTED` → **PC ra lệnh rót** (vòng kín thị giác).
+3. Trong lúc rót, PC đọc model mỗi 200 ms; nước vào đúng dải của mức đã chọn → **ngắt bơm ngay**.
+
+Bật trong `config/settings.yaml`:
+
+```yaml
+vision:   { level_enable: true, level_model: weights/muc_nuoc_yolo.pt, level_conf: 0.35 }
+control:  { level: { stop_rule: mid, check_period_ms: 200 } }
+esp:      { pc_controls_pump: true, pc_auto_start_on_button: true }
+```
+
+Thử model trước (không rót nước): `python tools\level_check.py --check`, rồi
+`python tools\level_check.py --camera 0 --seconds 15` để xem dải mực nước đọc được trên webcam.

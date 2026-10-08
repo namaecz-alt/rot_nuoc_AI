@@ -19,11 +19,18 @@ Lớp 3 - VÒNG KÍN THỊ GIÁC (FINE + SETTLING + TOPUP):
     Bơm PWM nhỏ tới khi vạch nước chạm target_mm (trừ đoạn lead bù trễ),
     chờ lắng, đọc lại, bù thiếu bằng xung nhỏ. Thừa không hút được -> báo OVERFILL.
 
+Lớp 4 - MODEL MỰC NƯỚC CỦA BẠN (tùy chọn, ``level_detector``):
+    weights/muc_nuoc_yolo.pt nhìn ra dải mực nước ("0-", "30-", "60-", "90-" theo
+    chiều cao cốc) ngay TRONG LÚC RÓT. Khi nước đã chạm mức người dùng chọn trên ESP
+    (``target_ml``) -> ngắt bơm ngay, bỏ qua nhịp bù TOPUP. Đây là lớp kiểm tra độc
+    lập với phép đong theo lưu lượng, nên rót đúng mức dù lưu lượng hiệu chuẩn lệch.
+
 An toàn: timeout, mất cốc, giới hạn thể tích tuyệt đối, chặn target sát miệng cốc.
 """
 from __future__ import annotations
 
 import time
+import types
 from enum import Enum
 from typing import Optional
 
@@ -47,11 +54,14 @@ class State(str, Enum):
 
 
 class FillController:
-    def __init__(self, cfg, camera, pump, detector: Optional[CupDetector] = None):
+    def __init__(self, cfg, camera, pump, detector: Optional[CupDetector] = None,
+                 level_detector=None):
         self.cfg = cfg
         self.cam = camera
         self.pump = pump
         self.det = detector or CupDetector(cfg)
+        # lớp 4: model mực nước của người dùng (weights/muc_nuoc_yolo.pt); None = tắt
+        self.level = level_detector
         loop = cfg.get("control.loop", {})
         self.fps = float(loop.get("fps", 15))
         self.settle_s = float(loop.get("settle_s", 0.8))
@@ -67,6 +77,14 @@ class FillController:
         self.stable_n = int(self.safe.get("cup_stable_frames", 4))
         self.grace_s = float(self.safe.get("no_cup_grace_s", 1.5))
         self.in_flight_ml = float(cfg.get("calibration.in_flight_ml", 4.0))
+        self.level_tol = float(cfg.get("control.level.reach_tolerance", 0.0))
+        self.level_period = float(cfg.get("control.level.check_period_ms", 200)) / 1000.0
+        # "mid": dừng khi nước vào dải chứa mức đã chọn | "lo": chỉ dừng khi chắc chắn
+        # đã qua mức | "ml": model chỉ để hiển thị, dừng theo đong lưu lượng như cũ
+        self.level_rule = str(cfg.get("control.level.stop_rule", "mid"))
+        self.level_reading = None          # LevelReading gần nhất
+        self.level_stop = False            # đã ngừng bơm vì model thấy đủ mức?
+        self._t_level = 0.0
 
         self.tracker = WaterTracker(int(cfg.get("detection.waterline.temporal_window", 3)))
         self.presets = list(cfg.get("control.presets_ml", [100, 150, 200, 250, 300]))
@@ -120,6 +138,9 @@ class FillController:
         self._fit = None
         self.tracker.reset()
         self.final_report = {}
+        self.level_reading = None
+        self.level_stop = False
+        self._t_level = 0.0
 
     def stop(self, why: str = "") -> None:
         self.pump.off()
@@ -175,6 +196,18 @@ class FillController:
                 if len(self._samples) > 400:
                     self._samples.pop(0)
 
+        # ---------------- lớp 4: model mực nước của người dùng ----------------
+        # Chỉ chạy khi đang rót và model dùng được; có chu kỳ riêng để không nặng CPU.
+        if (self.level is not None and getattr(self.level, "available", False)
+                and self.state in (State.PRIME, State.COARSE, State.FINE, State.TOPUP)):
+            self._t_level += dt
+            if self.level_reading is None or self._t_level >= self.level_period:
+                self._t_level = 0.0
+                cup_box = (det.x0, det.y0, det.x1, det.y1) if det.found else None
+                r = self.level.detect(frame, cup_box=cup_box)
+                if r is not None:
+                    self.level_reading = r
+
         # ---------------- an toàn cắt ngang ----------------
         if self.state in (State.PRIME, State.COARSE, State.FINE, State.TOPUP):
             if self.elapsed > self.timeout_s:
@@ -190,6 +223,13 @@ class FillController:
                 self._no_cup_t = 0.0
             if self._vcmd > self.max_vol * 1.15:
                 self._fault("OVERVOLUME: bơm quá giới hạn an toàn %g ml" % self.max_vol)
+                return self.telemetry()
+            # model nhìn thấy nước đã chạm mức đã chọn -> ngừng bơm ngay
+            if self._level_reached():
+                self.pump.off()
+                self.level_stop = True
+                self.alert = "Tới mức đã chọn (%s)" % self.level_reading.text()
+                self._goto(State.SETTLING)
                 return self.telemetry()
 
         st = self.state
@@ -217,6 +257,22 @@ class FillController:
         if len(self._history) > 20000:
             self._history.pop(0)
         return self.telemetry()
+
+    # ------------------------------------------------------------------
+    def cup_geom(self):
+        """Hình học cốc đã đo, dạng đối tượng nhỏ để đổi dải mực nước -> ml."""
+        return types.SimpleNamespace(cup_height_mm=self.g_h, r_base_mm=self.g_base,
+                                     r_rim_mm=self.g_rim)
+
+    def _level_reached(self) -> bool:
+        """Model có đang thấy nước đã chạm ``target_ml`` chưa?"""
+        if self.level is None or self.level_reading is None or self.g_h <= 0:
+            return False
+        try:
+            return bool(self.level.reached(self.target_ml, self.cup_geom(), self.level_reading,
+                                           tol=self.level_tol, mode=self.level_rule))
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     def _goto(self, st: State) -> None:
@@ -294,7 +350,7 @@ class FillController:
         if err > self.max_over_mm:
             self._fault("OVERFILL: vượt đích %.1f mm" % err)
             return
-        if err < -1.0 and self._pulses < self.topup_max:
+        if err < -1.0 and self._pulses < self.topup_max and not self.level_stop:
             self._pulses += 1
             pulse = min(self.topup_ml, max(abs(err) * self._area_at_target() / 1000.0, 0.8))
             self._topup_t = pulse / max(self.pump.flow_at(self.pump.min_pwm), 1e-6)
@@ -303,6 +359,8 @@ class FillController:
             return
         self.final_report = {
             "preset_ml": self.target_ml,
+            "stopped_by": ("model_muc_nuoc" if self.level_stop else "dong_theo_luu_luong"),
+            "level_band": (self.level_reading.label if self.level_reading is not None else ""),
             "height_mm": round(self.h_mm, 2),
             "target_mm": round(self.target_mm, 2),
             "err_mm": round(err, 2),
@@ -397,6 +455,15 @@ class FillController:
             "cup": bool(det.found) if det is not None else False,
             "waterline": bool(det.waterline_found) if det is not None else False,
             "cup_h_mm": round(self.g_h, 1),
+            "level_band": (self.level_reading.label if self.level_reading is not None else ""),
+            "level_conf": (round(float(self.level_reading.conf), 3)
+                           if self.level_reading is not None else 0.0),
+            "level_ml": (round(self.level.ml_now(self.cup_geom(), self.level_reading), 1)
+                         if (self.level is not None and self.level_reading is not None
+                             and self.g_h > 0) else 0.0),
+            "level_target_ml": round(self.target_ml, 1),
+            "level_stop": bool(self.level_stop),
+            "level_rule": self.level_rule,
             "elapsed_s": round(self.elapsed, 2),
             "pulses": self._pulses,
             "report": self.final_report,

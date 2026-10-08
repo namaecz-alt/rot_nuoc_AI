@@ -27,6 +27,7 @@ from .camera import open_camera
 from .controller import FillController, State
 from .detection import CupDetector, CupDetection
 from .esp_bridge import EspBridge
+from .level_yolo import WaterLevelDetector
 from .synthetic import CupScene, SyntheticCupCamera
 
 __all__ = ["SessionConfig", "AutoFillSession"]
@@ -48,7 +49,8 @@ class SessionConfig:
 class AutoFillSession:
     def __init__(self, cfg, bridge: Optional[EspBridge] = None, port: Optional[str] = None,
                  detector=None, scene=None, log: Optional[Callable[[str], None]] = None,
-                 on_state: Optional[Callable[[str, dict], None]] = None):
+                 on_state: Optional[Callable[[str, dict], None]] = None,
+                 level_detector=None):
         self.cfg = cfg
         self.log = log or (lambda msg: print(msg, flush=True))
         self.bridge = bridge or EspBridge(cfg, port=port, log=self.log)
@@ -68,10 +70,13 @@ class AutoFillSession:
         )
         self.sc = sc
         self.detector = detector or CupDetector(cfg)
+        # model mực nước của người dùng (weights/muc_nuoc_yolo.pt): tự tắt nếu thiếu
+        self.level = level_detector if level_detector is not None else WaterLevelDetector(cfg)
         self.scene = scene
 
         self.cam = None
         self.ctl: Optional[FillController] = None
+        self.last_pc_report: Optional[Dict] = None   # báo cáo lượt rót vòng kín gần nhất
         self.t_camera_open = 0.0
         self.t_last_use = 0.0
         self.t_last_use = time.time()
@@ -192,9 +197,9 @@ class AutoFillSession:
         self.message = "Giữ cốc yên... (%d/%d)" % (self._stable, self.sc.recognize_stable)
         if self._stable < self.sc.recognize_stable:
             return
-        self._confirm(det)
+        self._confirm(det, frame)
 
-    def _confirm(self, det: CupDetection) -> None:
+    def _confirm(self, det: CupDetection, frame=None) -> None:
         height_mm = float(det.cup_height_mm)
         r_rim = float(det.r_rim_mm)
         r_base = float(det.r_base_mm)
@@ -210,6 +215,15 @@ class AutoFillSession:
             "water_now_ml": round(water_ml, 0), "can_pour_ml": round(room_ml, 0),
             "label": label, "confidence": round(float(det.confidence), 2),
         }
+        # model mực nước: đọc xem trong cốc đang có sẵn bao nhiêu nước (nếu dùng được)
+        if frame is not None and self.level is not None and self.level.available:
+            r = self.level.detect(frame)
+            if r is not None:
+                self.cup_meta["level_band"] = r.label
+                self.cup_meta["level_conf"] = round(float(r.conf), 2)
+                self.cup_meta["level_ml"] = round(self.level.ml_now(det, r), 0)
+                self.log("[PC] model mực nước: %s -> trong cốc ~%d ml"
+                         % (r.text(), round(self.level.ml_now(det, r))))
         self.n_recognized += 1
         self._pending = None
         self.state = "READY"
@@ -235,7 +249,7 @@ class AutoFillSession:
             return False
         if self.ctl is None:
             self.ctl = FillController(self.cfg, self.cam, self.bridge.remote_pump_adapter,
-                                      detector=self.detector)
+                                      detector=self.detector, level_detector=self.level)
             # demo bằng camera giả lập: cho nước dâng theo lệnh bơm gửi xuống ESP
             syn = getattr(self.cam, "synthetic", None)
             if syn is not None and self.bridge.simulator is not None:
@@ -251,12 +265,14 @@ class AutoFillSession:
         self.t_last_use = time.time()
         if tel["state"] in ("DONE", State.DONE.value):
             self.bridge.stop_fill(P.StopReason.NORMAL)
+            self.last_pc_report = dict(tel.get("report") or {})
             self.log("[PC] vòng kín thị giác xong: %s" % tel.get("report"))
             self.state = "DONE"
             self.message = "Rót xong (PC điều khiển)"
             self.ctl = None
         elif tel["state"] in ("FAULT", State.FAULT.value):
             self.bridge.stop_fill(P.StopReason.PC_REQUEST)
+            self.last_pc_report = dict(tel.get("report") or {})
             self.log("[PC] vòng kín thị giác GẶP LỖI: %s" % tel.get("alert"))
             self.error = tel.get("alert", "")
             self.state = "FAULT"
@@ -305,8 +321,19 @@ class AutoFillSession:
             "n_rejected": self.n_rejected,
             "esp": self.bridge.summary,
         }
+        if self.level is not None:
+            tel["level_model"] = {
+                "on": bool(getattr(self.level, "available", False)),
+                "weights": self.level.weights,
+                "band": (self.level.last.label if self.level.last is not None else ""),
+                "conf": (round(float(self.level.last.conf), 3)
+                         if self.level.last is not None else 0.0),
+                "error": self.level.last_error,
+            }
         if self.ctl is not None:
             tel["vision"] = self.ctl.telemetry()
+        if self.last_pc_report is not None:
+            tel["pc_report"] = self.last_pc_report
         if self.det is not None:
             tel["waterline_found"] = bool(self.det.waterline_found)
             tel["h_mm"] = round(float(self.det.water_height_mm), 2)
