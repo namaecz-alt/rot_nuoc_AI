@@ -21,6 +21,8 @@ class CupSensor {
   void begin(float baselineMm = CUP_BASELINE_MM) {
     _baseline = baselineMm;
     _samples = 0;
+    _w = 0;
+    for (uint8_t i = 0; i < CUP_MEDIAN_N; i++) _median[i] = baselineMm;
     _present = false;
     _rawPresent = false;
     _tLastSample = 0;
@@ -54,6 +56,7 @@ class CupSensor {
 #endif
     _tLastSample = nowMs;
     _samples = 0;
+    _w = 0;
     return _baseline;
   }
 
@@ -83,7 +86,10 @@ class CupSensor {
       _tLastSample = nowMs;
       float d = _measureOnce();
       if (d > 5.0f && d <= CUP_MAX_DISTANCE_MM) {
-        _median[_samples % CUP_MEDIAN_N] = d;
+        // Ghi vào ô kế tiếp của vòng đệm (chỉ số riêng, KHÔNG dùng _samples:
+        // _samples dừng ở CUP_MEDIAN_N nên _samples % N luôn = 0 -> trung vị "đóng băng")
+        _median[_w] = d;
+        _w = (uint8_t)((_w + 1) % CUP_MEDIAN_N);
         if (_samples < CUP_MEDIAN_N) _samples++;
         _distance = _medianOf(_samples);
         _height = _baseline - _distance;
@@ -148,6 +154,7 @@ class CupSensor {
 
   float _median[CUP_MEDIAN_N] = {0, 0, 0};
   uint8_t _samples = 0;
+  uint8_t _w = 0;                     // ô ghi kế tiếp trong vòng đệm trung vị
   float _baseline = CUP_BASELINE_MM;
   float _distance = 0.0f;
   float _height = 0.0f;

@@ -253,10 +253,27 @@ Bộ kiểm tra trên PC đối chiếu **từng byte** giữa C++ trong firmwar
 các kịch bản (khoá nút → CUP_OK → bơm → nhấc cốc → ngắt bơm):
 
 ```bash
-python3 tools/test_comms.py                 # toàn bộ (77 bài)
+python3 tools/test_comms.py                 # toàn bộ (141 bài)
 python3 tools/test_comms.py --only firmware # chỉ phần config/sketch
+python3 tools/test_comms.py --only fwrun    # CHẠY THẬT firmware trên PC (máy ảo mini)
 ```
 
 `firmware/host_test/test_protocol.cpp` biên dịch được bằng g++ thường (không cần ESP32) và so khớp
-với `firmware/host_test/protocol_vectors.txt` (44 vector vàng, sinh bằng
+với `firmware/host_test/protocol_vectors.txt` (45 vector vàng, sinh bằng
 `tools/gen_protocol_vectors.py`). Sửa giao thức thì **sinh lại vector rồi chạy lại bộ test**.
+
+`firmware/host_test/test_firmware_run.cpp` còn đi xa hơn: nó `#include` **chính file
+`esp32_cup_filler.ino`** rồi chạy trên một máy ảo mini (`arduino_stub.h`: đồng hồ ảo, chân GPIO
+thật, HC-SR04 giả, mic analog giả, UART2 nối vào PC giả). Nhờ vậy kiểm chứng được hành vi thật
+của firmware mà không cần cắm mạch: chưa có `CUP_OK` thì bấm nút **không** bơm, `CUP_OK` mới mở
+khoá, relay **tích cực mức CAO**, rót đúng số ml, và nhấc cốc / mất liên lạc UART 3 s / quá trần
+thể tích / quá thời gian / giữ nút 2 s đều **ngắt bơm ngay**. Các gói firmware phát ra được đưa
+ngược vào `cupfiller/protocol.py` để giải mã — PCM của mic còn được chính `VoiceRecognizer` của
+PC nhận dạng lại. Biên dịch tay:
+
+```bash
+g++ -std=c++11 -O2 -I firmware/esp32_cup_filler -I firmware/host_test \
+    -I firmware/host_test/arduino_stub -o /tmp/fwrun \
+    firmware/host_test/test_firmware_run.cpp firmware/host_test/arduino_stub/instances.cpp -lm
+/tmp/fwrun          # in CHECK OK/FAIL, TX..., RESULT <đạt> <lỗi>
+```

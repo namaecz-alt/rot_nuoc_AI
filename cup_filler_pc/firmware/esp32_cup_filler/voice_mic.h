@@ -99,7 +99,8 @@ class VoiceEngine {
     }
     uint32_t rate = n * 10;                    // mẫu/giây
     if (rate < 4000) rate = 4000;
-    if (rate > 32000) rate = 32000;
+    // Mã tần số gửi PC chỉ có 4 bit (AU_RATE_SHIFT) -> tối đa 15 x 2000 = 30000 Hz.
+    if (rate > (uint32_t)(15 * 2000)) rate = 15 * 2000;
     return rate;
   }
 
@@ -217,7 +218,9 @@ class VoiceEngine {
     }
     // nibble cao của flags = tần số lấy mẫu thực tế / 2 kHz (0 = dùng mặc định)
     uint8_t flags = (uint8_t)(_startFlag ? 1 : 0) | (uint8_t)((endFlag & 2) ? 2 : 0);
-    uint8_t rateCode = (uint8_t)((_rateHz / 2000) & 0x0F);
+    uint32_t rc = _rateHz / 2000;                    // 4 bit: 0..15 (0 = PC dùng mặc định)
+    if (rc > 15) rc = 15;
+    uint8_t rateCode = (uint8_t)rc;
     flags |= (uint8_t)(rateCode << 4);
     _chunkCb(_chunk, _chunkFill, flags, _user);
     _chunkFill = 0;

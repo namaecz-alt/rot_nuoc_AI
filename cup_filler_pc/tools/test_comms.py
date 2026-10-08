@@ -593,7 +593,7 @@ def test_cli() -> None:
 # ==========================================================================
 def test_entry() -> None:
     """Chạy đúng lệnh mà người dùng sẽ gõ: tools/run_pc.py --port sim --synthetic --demo."""
-    print("== [9] CHẠY THẬT tools/run_pc.py --port sim --synthetic --demo ==")
+    print("== [10] CHẠY THẬT tools/run_pc.py --port sim --synthetic --demo ==")
     cmd = [sys.executable, os.path.join(ROOT, "tools", "run_pc.py"),
            "--port", "sim", "--synthetic", "--demo"]
     try:
@@ -622,7 +622,7 @@ def test_entry() -> None:
 # ==========================================================================
 def test_cli() -> None:
     """Bảng điều khiển tools/esp_cli.py (ESP32 giả lập, đồng hồ tua nhanh)."""
-    print("== [8] BẢNG ĐIỀU KHIỂN esp_cli.py ==")
+    print("== [9] BẢNG ĐIỀU KHIỂN esp_cli.py ==")
     import contextlib
     import io
 
@@ -651,10 +651,192 @@ def test_cli() -> None:
     check("trần=300 ml" in out, "CUP_OK giới hạn được trần rót trên ESP (300 ml)")
 
 
+
+# ==========================================================================
+def test_fwrun() -> None:
+    """CHẠY THẬT firmware ESP32 trên máy tính rồi đối chiếu với protocol.py.
+
+    firmware/host_test/test_firmware_run.cpp nạp thẳng esp32_cup_filler.ino vào một máy
+    ảo mini (đồng hồ ảo, chân GPIO thật, HC-SR04 giả, mic giả, UART2 nối vào đây), nên
+    các gói tin dưới đây là do CHÍNH mã firmware phát ra, được protocol.py giải mã lại.
+    """
+    print("== [7] CHẠY THẬT FIRMWARE TRÊN MÁY TÍNH (HIL) ==")
+    gxx = shutil.which("g++")
+    if not gxx:
+        check(False, "tìm thấy g++ để chạy firmware trên máy tính")
+        return
+    src = os.path.join(ROOT, "firmware", "host_test", "test_firmware_run.cpp")
+    stub = os.path.join(ROOT, "firmware", "host_test", "arduino_stub", "instances.cpp")
+    inc_fw = os.path.join(ROOT, "firmware", "esp32_cup_filler")
+    inc_host = os.path.join(ROOT, "firmware", "host_test")
+    inc_stub = os.path.join(ROOT, "firmware", "host_test", "arduino_stub")
+    exe = os.path.join(tempfile.gettempdir(), "cupfiller_fwrun")
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = os.path.join(tmp, "fwrun")
+        proc = subprocess.run([gxx, "-std=c++11", "-O2", "-I", inc_fw, "-I", inc_host,
+                               "-I", inc_stub, "-o", exe, src, stub, "-lm"],
+                              capture_output=True, text=True, timeout=300)
+        if proc.returncode != 0:
+            check(False, "biên dịch test_firmware_run.cpp (dựng firmware thật)",
+                  (proc.stderr or "").strip().splitlines()[-1] if proc.stderr else "")
+            return
+        check(True, "biên dịch được firmware + máy ảo mini trên máy tính")
+        try:
+            run = subprocess.run([exe], capture_output=True, text=True, timeout=600)
+        except subprocess.TimeoutExpired:
+            check(False, "chạy kịch bản firmware kết thúc trong 600 s")
+            return
+    out = run.stdout or ""
+    lines = out.splitlines()
+
+    # ---- các bài kiểm tra bên trong firmware (C++) ----
+    checks = [(l[len("CHECK OK "):], True) for l in lines if l.startswith("CHECK OK ")]
+    checks += [(l[len("CHECK FAIL "):], False) for l in lines if l.startswith("CHECK FAIL ")]
+    bad = [name for name, okay in checks if not okay]
+    check(checks and not bad, "tất cả %d bài kiểm tra logic trong firmware đều đạt" % len(checks),
+          " | ".join(bad[:3]))
+    check("RESULT" in out, "firmware chạy hết kịch bản (in RESULT)")
+
+    # ---- gói tin THẬT của firmware, giải mã bằng protocol.py ----
+    tx = "\n".join(l[3:] for l in lines if l.startswith("TX "))
+    dec = P.FrameDecoder()
+    frames = []
+    for chunk in tx.splitlines():
+        raw = bytes.fromhex(chunk.strip())
+        frames += dec.feed(raw)
+    by: dict = {}
+    for f in frames:
+        try:
+            name = P.Msg(f.msg).name
+        except ValueError:
+            name = "MSG_%02X" % f.msg
+        by.setdefault(name, []).append(P.decode(f))
+    check(len(frames) > 30, "firmware phát ra nhiều gói tin qua UART", "%d gói" % len(frames))
+    check(dec.n_bad_crc == 0 and dec.n_dropped_bytes == 0,
+          "gói firmware phát ra hợp lệ 100%% (không sai CRC, không rác)",
+          "bad_crc=%d dropped=%d" % (dec.n_bad_crc, dec.n_dropped_bytes))
+    check("HELLO" in by and by["HELLO"][0]["version"] == P.PROTO_VERSION,
+          "firmware gửi HELLO có phiên bản giao thức đúng")
+    check(by.get("HELLO", [{}])[0].get("presets") == [100, 150, 200, 250, 300],
+          "HELLO khai báo đúng 5 mức nước")
+
+    cp = by.get("CUP_PLACED", [])
+    check(cp and cp[0]["flags"] & 1, "đặt cốc -> CUP_PLACED (cờ 'mới phát hiện')",
+          "%d gói CUP_PLACED" % len(cp))
+    check(cp and 60 <= cp[0]["height_mm"] <= 130, "CUP_PLACED báo đúng chiều cao cốc",
+          "%s mm" % (cp[0]["height_mm"] if cp else "?"))
+
+    # trạng thái: chưa xác nhận -> không mở khoá
+    st = by.get("STATUS", [])
+    first_unconf = [d for d in st if not d["pc_confirmed"]]
+    check(first_unconf and not first_unconf[0]["cup_present"],
+          "STATUS đầu tiên: chưa có cốc, chưa mở khoá")
+
+    ps = by.get("PRESET_SELECTED", [])
+    check(ps and ps[0]["index"] == 2 and ps[0]["ml"] == 200 and ps[0]["source"] == 0,
+          "bấm nút 3 -> PRESET_SELECTED mức 200 ml (nguồn: nút)",
+          str(ps[0]) if ps else "không có gói nào")
+
+    def n_events_before(name, uptime_ms):
+        """Đếm số khung của một loại xuất hiện trước một mốc thời gian."""
+        return sum(1 for f in frames if f.msg == P.Msg[name] and f.msg)
+
+    fs = by.get("FILL_STARTED", [])
+    check(fs and fs[0]["ml"] == 200 and fs[0]["mode"] == 0,
+          "FILL_STARTED đúng mục tiêu 200 ml, chế độ ESP tự đong", str(fs[0]) if fs else "")
+    fd = by.get("FILL_DONE", [])
+    done = [d for d in fd if d["status"] == int(P.StopReason.NORMAL)]
+    check(done and abs(done[0]["poured_ml"] - 200) <= 12,
+          "FILL_DONE bình thường: rót đúng 200 ml",
+          "%s ml" % (done[0]["poured_ml"] if done else "?"))
+
+    cr = by.get("CUP_REMOVED", [])
+    check(cr and cr[0]["reason"] == int(P.StopReason.CUP_REMOVED),
+          "nhấc cốc -> CUP_REMOVED kèm mã dừng 'nhấc cốc'")
+    reasons = [d["status"] for d in fd]
+    check(int(P.StopReason.LINK_LOST) in reasons, "mất liên lạc UART -> FILL_DONE mã 'mất liên lạc'",
+          "các mã dừng thấy được: %s" % sorted(set(reasons)))
+    check(int(P.StopReason.OVER_VOLUME) in reasons, "quá trần thể tích -> FILL_DONE mã 'quá thể tích'")
+    check(int(P.StopReason.TIMEOUT) in reasons, "quá thời gian an toàn -> FILL_DONE mã 'quá thời gian'")
+    check(int(P.StopReason.BUTTON_ESTOP) in reasons,
+          "giữ nút 2 s -> FILL_DONE mã 'dừng khẩn cấp'")
+
+    be = by.get("BUTTON_EVENT", [])
+    check(len(be) >= 3 and any(d["event"] == int(P.BTN_ESTOP) for d in be),
+          "BUTTON_EVENT báo được nhấn ngắn và dừng khẩn cấp", "%d sự kiện" % len(be))
+    check(by.get("ACK") and any(d["acked_msg"] == int(P.Msg.CUP_OK) for d in by["ACK"]),
+          "firmware trả ACK cho CUP_OK của PC")
+    check(by.get("PONG"), "firmware trả PONG cho PING của PC (giữ nhịp tim)")
+
+    # ---- mic: PCM thật của firmware -> chính VoiceRecognizer của PC nhận dạng ----
+    audio = by.get("AUDIO_CHUNK", [])
+    check(len(audio) > 20, "mic đẩy PCM lên PC qua gói AUDIO_CHUNK", "%d gói" % len(audio))
+    if audio:
+        vr = VoiceRecognizer(presets=(100, 150, 200, 250, 300))
+        for d in audio:
+            vr.feed(d)
+        res = vr.analyze()
+        check(res.ok and res.index == 2,
+              "PC nhận dạng PCM của firmware: 3 tiếng -> mức 200 ml",
+              "%s (tần số ESP báo: %s Hz)" % (res.text or res.reason, audio[0].get("rate_hz")))
+    ve = by.get("VOICE_EVENT", [])
+    check(ve and ve[0]["n_peaks"] == 3, "firmware đếm đúng 3 tiếng trong đoạn nói",
+          str(ve[0]) if ve else "không có VOICE_EVENT")
+
+    # ---- gói PC->ESP do bài test C++ sinh ra phải khớp bộ mã hoá của Python ----
+    # Mỗi gói được giải mã rồi MÃ HOÁ LẠI bằng protocol.py; hai bộ mã hoá (C++ và Python)
+    # khớp nhau thì payload phải trùng từng byte.
+    def reencode(name, d):
+        if name == "HELLO_ACK":
+            return P.encode_hello_ack(d["version"], d["caps"], d["presets"])
+        if name == "CUP_OK":
+            return P.encode_cup_ok(d["rim_r_mm"], d["base_r_mm"], d["height_mm"],
+                                   d["max_ml"], d["confidence"], d["flags"], d["label"])
+        if name == "SET_PRESET":
+            return P.encode_set_preset(d["index"], d["ml"], d["source"])
+        if name == "START_FILL":
+            return P.encode_start_fill(d["ml"], d["mode"], d["source"])
+        if name == "STOP_FILL":
+            return P.encode_stop_fill(d["reason"])
+        if name == "SET_MODE":
+            return P.encode_set_mode(d["on"], d["off"])
+        if name == "PUMP_SET":
+            return P.encode_pump_set(d["duty"], d["duration_ms"])
+        if name == "SET_PARAMS":
+            return P.encode_set_params(d["flow_ml_s"], d["max_ml"], d["timeout_s"])
+        if name == "CMD":
+            return P.encode_cmd(d["cmd"], d["arg"])
+        if name == "PING":
+            return P.encode_ping(d["uptime_ms"])
+        return None
+
+    mismatch, compared = [], set()
+    for hx in (l[3:] for l in lines if l.startswith("PC ")):
+        raw = bytes.fromhex(hx.strip())
+        got = P.FrameDecoder().feed(raw)
+        if len(got) != 1:
+            mismatch.append("khung hỏng: " + hx.strip())
+            continue
+        fr = got[0]
+        try:
+            name = P.Msg(fr.msg).name
+        except ValueError:
+            mismatch.append("msg lạ 0x%02X" % fr.msg)
+            continue
+        want = reencode(name, P.decode(fr))
+        if want is None or want == fr.payload:
+            compared.add(name)
+            continue
+        mismatch.append("%s: C++ %s != Python %s" % (name, fr.payload.hex(), want.hex()))
+    check(not mismatch and len(compared) >= 4,
+          "gói PC->ESP do bài test sinh khớp bộ mã hoá của protocol.py",
+          " | ".join(mismatch[:3]) + (" (đối chiếu %s)" % ",".join(sorted(compared))))
+
+
 # ==========================================================================
 def test_web() -> None:
     """Giao diện web ở CHẾ ĐỘ ESP32 (không cần trình duyệt, không cần phần cứng)."""
-    print("== [7] GIAO DIỆN WEB (chế độ ESP32) ==")
+    print("== [8] GIAO DIỆN WEB (chế độ ESP32) ==")
     try:
         from cupfiller.webapp import WebApp
     except Exception as exc:                                   # pragma: no cover
@@ -761,7 +943,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-cpp", action="store_true", help="bỏ bài kiểm tra biên dịch C++")
     ap.add_argument("--only", default=None,
-                    help="chỉ chạy một nhóm: protocol|cpp|voice|flow|session|firmware|web|cli|entry")
+                    help="chỉ chạy một nhóm: protocol|cpp|voice|flow|session|firmware|"
+                         "fwrun|web|cli|entry")
     args = ap.parse_args()
 
     groups = {
@@ -771,6 +954,7 @@ def main() -> int:
         "flow": test_flow,
         "session": test_session,
         "firmware": lambda: test_firmware(not args.no_cpp),
+        "fwrun": test_fwrun,
         "web": test_web,
         "cli": test_cli,
         "entry": test_entry,
