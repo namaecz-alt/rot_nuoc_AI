@@ -278,6 +278,11 @@ class EspBridge:
             self.status.cup_present = False
             self.status.pc_confirmed = False
             self.status.pumping = False
+            reason = int(fields.get("reason") or 0)
+            self.log("[ESP] %s" % P.stop_reason_text(reason))
+            if reason == int(P.StopReason.SENSOR_FAULT):
+                self.log("[ESP] LỖI CẢM BIẾN: kiểm tra dây/jack HC-SR04 rồi gửi 'tare' hoặc "
+                         "'mode' để ESP chạy lại")
             self._emit(name, fields=fields)
             if self.on_cup_removed is not None:
                 try:
@@ -326,9 +331,10 @@ class EspBridge:
             self.status.poured_ml = int(fields.get("poured_ml") or 0)
             elapsed = float(fields.get("elapsed_ms") or 0) / 1000.0
             self._emit(name, fields=fields)
-            self.log("[ESP] kết thúc lượt rót: %d ml / đích %d ml trong %.1fs (mã %s)"
+            code = int(fields.get("status") or 0)
+            self.log("[ESP] kết thúc lượt rót: %d ml / đích %d ml trong %.1fs (%s)"
                      % (self.status.poured_ml, int(fields.get("target_ml") or 0), elapsed,
-                        int(fields.get("status") or 0)))
+                        P.stop_reason_text(code)))
             return
 
         if msg == P.Msg.BUTTON_EVENT:

@@ -207,6 +207,27 @@ class StopReason(IntEnum):
     SENSOR_FAULT = 7
 
 
+# Tên tiếng Việt của mã dừng, để log/telemetry đọc được ngay (mã 7 là lỗi cảm biến)
+STOP_REASON_TEXT = {
+    StopReason.NORMAL: "rót đủ mức đã chọn",
+    StopReason.PC_REQUEST: "PC yêu cầu dừng",
+    StopReason.CUP_REMOVED: "đã nhấc cốc ra",
+    StopReason.TIMEOUT: "quá thời gian an toàn",
+    StopReason.LINK_LOST: "mất liên lạc UART với PC",
+    StopReason.BUTTON_ESTOP: "DỪNG KHẨN CẤP (giữ nút 2 s)",
+    StopReason.OVER_VOLUME: "quá trần thể tích an toàn",
+    StopReason.SENSOR_FAULT: "LỖI CẢM BIẾN SIÊU ÂM (kiểm tra dây HC-SR04)",
+}
+
+
+def stop_reason_text(reason: int) -> str:
+    """Mã dừng -> câu tiếng Việt cho log/telemetry. Mã lạ -> 'mã không rõ (n)'."""
+    try:
+        return STOP_REASON_TEXT[StopReason(int(reason))]
+    except (ValueError, KeyError):
+        return "mã không rõ (%s)" % reason
+
+
 class Cmd(IntEnum):
     ARM = 0
     DISARM = 1

@@ -65,6 +65,12 @@ def check(cond: bool, label: str, detail: str = "") -> bool:
 def test_protocol() -> None:
     print("== [1] PROTOCOL (Python) ==")
     check(P.crc16_ccitt(b"123456789") == 0x29B1, "CRC-16/CCITT-FALSE vector chuẩn 0x29B1")
+    missing = [r.name for r in P.StopReason if not P.stop_reason_text(int(r))]
+    check(not missing, "mọi mã dừng đều có câu tiếng Việt để hiển thị", str(missing))
+    check("cảm biến" in P.stop_reason_text(int(P.StopReason.SENSOR_FAULT)).lower(),
+          "mã dừng 7 (lỗi cảm biến) hiển thị đúng là lỗi cảm biến",
+          P.stop_reason_text(int(P.StopReason.SENSOR_FAULT)))
+    check("không rõ" in P.stop_reason_text(99), "mã dừng lạ -> báo 'mã không rõ'")
 
     # vector vàng trong file phải khớp bảng sinh (không bị sửa tay)
     try:
