@@ -45,7 +45,8 @@ pip install -r requirements_pc.txt                    # đã thêm pyserial
 python3 tools/esp_cli.py --port sim --demo            # kịch bản: đặt cốc → xác nhận → bấm nút → rót 200 ml
 python3 tools/run_pc.py --port sim --synthetic --demo  # cả hệ thống, 10 bước, không cần màn hình
 python3 tools/web.py --port sim                         # web UI chế độ ESP32 (mở trình duyệt, tự chạy)
-python3 tools/test_comms.py                           # 183 bài tự kiểm chứng (giao thức, C++, luồng, firmware chạy thật trên PC, web)
+python3 tools/test_comms.py                           # 189 bài tự kiểm chứng (giao thức, C++, luồng, firmware chạy thật trên PC, web, model)
+python3 tools/test_comms.py --only model              # kiểm tra model mực nước weights/muc_nuoc_yolo.pt
 ```
 
 **Nạp firmware ESP32 (VS Code + PlatformIO):** mở thư mục **`cup_filler_pc/serial_esp32`** bằng
@@ -165,7 +166,9 @@ cup_filler/
 │   ├── detection_yolo.py      # YOLO tìm cốc + CV đo vạch nước
 │   └── yolo_dataset.py        # sinh dataset có nhãn tổng hợp
 ├── weights/yolo11n_coco.pt    # pretrained COCO (cup), chạy ngay
-├── weights/cup_yolo.pt        # model của bạn sau khi train
+├── weights/cup_yolo.pt        # model nhận diện cốc của bạn sau khi train
+├── weights/muc_nuoc_yolo.pt   # model MỰC NƯỚC của bạn: 4 lớp 0- / 30- / 60- / 90-
+│                              #   (mức nước tính theo chiều cao cốc) - VS Code/Colab train
 ├── tools/
 │   ├── detect_pc.py           # webcam / ảnh / video
 │   ├── run_pc.py              # UI demo, FSM dry-run
@@ -180,7 +183,7 @@ cup_filler/
 │   ├── esp_cli.py             # bảng điều khiển ESP32 (thật/giả lập): status, ok, tare, watch
 │   └── web.py                 # giao diện web (--port sim|COM5 để chạy chế độ ESP32)
 │   ├── gen_protocol_vectors.py# sinh lại vector vàng sau khi sửa giao thức
-│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (183 bài, không cần phần cứng)
+│   └── test_comms.py          # tự kiểm chứng ESP32 ↔ PC (189 bài, không cần phần cứng)
 ├── serial_esp32/              # PROJECT VS CODE + PLATFORMIO (mở thư mục này để nạp)
 │   ├── platformio.ini         # 2 môi trường: esp32dev (UART2) / esp32dev_usb (cáp USB)
 │   ├── include/serial_link.h  # GIAO TIẾP VỚI PC: chọn cổng, gửi/nhận khung gói tin

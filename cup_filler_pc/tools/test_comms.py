@@ -1235,12 +1235,119 @@ def test_web() -> None:
 
 
 # ==========================================================================
+def test_model() -> None:
+    """Model YOLO do người dùng train: weights/muc_nuoc_yolo.pt (mực nước theo chiều cao cốc).
+
+    Đọc thẳng checkpoint mà KHÔNG cần torch/ultralytics (file .pt của YOLO là một zip, các
+    thông tin như tên lớp, task, model gốc nằm trong pickle) để bộ test luôn chạy được trên
+    máy chưa cài thư viện nặng. Nếu máy có ultralytics thì thử nạp luôn bằng YOLO().
+    """
+    import zipfile
+    print("== [11] MÔ HÌNH NHẬN DIỆN MỨC NƯỚC (weights/muc_nuoc_yolo.pt) ==")
+    path = os.path.join(ROOT, "weights", "muc_nuoc_yolo.pt")
+    check(os.path.exists(path), "có weights/muc_nuoc_yolo.pt (model bạn train, 4 lớp 0-/30-/60-/90-)")
+    if not os.path.exists(path):
+        return
+
+    def pickle_bytes(nm):
+        with zipfile.ZipFile(path) as zf:
+            for n in zf.namelist():
+                if n.endswith("data.pkl"):
+                    return zf.read(n)
+        return b""
+
+    def strings_after(buf, key):
+        """Các chuỗi nằm ngay sau khoá `key` trong pickle (dạng X<len4><bytes>)."""
+        out = []
+        start = buf.find(b"\x00" + key + b"r")
+        if start < 0:
+            start = buf.find(b"\x00" + key)
+        if start < 0:
+            return out
+        k = start
+        while k < len(buf) and len(out) < 40:
+            if buf[k:k+1] == b"X":
+                ln = int.from_bytes(buf[k+1:k+5], "little")
+                if 1 <= ln <= 40:
+                    out.append(buf[k+5:k+5+ln].decode("utf-8", "replace"))
+                    k += 5 + ln
+                    continue
+            k += 1
+        return out
+
+    try:
+        data = pickle_bytes("data.pkl")
+        check(len(data) > 1000, "checkpoint đọc được (zip + pickle hợp lệ)",
+              "%d byte pickle" % len(data))
+        with zipfile.ZipFile(path) as zf:
+            tensors = [n for n in zf.namelist() if "/data/" in n]
+        check(len(tensors) > 100, "có đủ trọng số trong checkpoint",
+              "%d tensor" % len(tensors))
+
+        # tên lớp: đọc dict nằm sau khoá 'names'
+        i = data.find(b"\x00namesr")
+        names = {}
+        if i >= 0:
+            k = i
+            while k < len(data) and data[k:k+1] != b"}":
+                k += 1
+            k += 1
+            cur = None
+            while k < len(data) and len(names) < 20:
+                b1 = data[k:k+1]
+                if b1 == b"K":
+                    cur = data[k+1]
+                    k += 2
+                    continue
+                if b1 == b"X":
+                    ln = int.from_bytes(data[k+1:k+5], "little")
+                    if cur is not None and 1 <= ln <= 40:
+                        names[cur] = data[k+5:k+5+ln].decode("utf-8", "replace")
+                    k += 5 + ln
+                    continue
+                if b1 in (b"u", b"e"):
+                    break
+                k += 1
+        got = [names[k] for k in sorted(names)]
+        check(got == ["0-", "30-", "60-", "90-"],
+              "model có đúng 4 lớp mực nước: 0- / 30- / 60- / 90-", str(got))
+
+        check("detect" in strings_after(data, b"task"),
+              "model là YOLO detect (vẽ hộp vùng mực nước), không phải classify")
+        check(any("yolov8n.pt" in t for t in strings_after(data, b"model")),
+              "model gốc là yolov8n.pt (bản nano, chạy nhẹ trên PC)")
+    except Exception as exc:                                  # pragma: no cover
+        check(False, "đọc checkpoint model mức nước", str(exc)[:200])
+
+    # nếu máy có ultralytics thì nạp thật, kiểm tra tên lớp lần nữa
+    try:
+        import importlib.util
+        has_ul = importlib.util.find_spec("ultralytics") is not None
+    except Exception:
+        has_ul = False
+    if not has_ul:
+        print("   (chưa cài ultralytics -> bỏ qua bước nạp model thật; "
+              "muốn chạy: pip install ultralytics)")
+    else:
+        try:
+            from ultralytics import YOLO
+            m = YOLO(path)
+            names = list(m.names.values()) if isinstance(m.names, dict) else list(m.names)
+            check(names == ["0-", "30-", "60-", "90-"],
+                  "ultralytics nạp được model và thấy đúng 4 lớp", str(names))
+            check(getattr(m, "task", "") == "detect", "ultralytics xác nhận task = detect",
+                  str(getattr(m, "task", "")))
+        except Exception as exc:                              # pragma: no cover
+            check(False, "nạp model bằng ultralytics", str(exc)[:200])
+
+
+# ==========================================================================
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-cpp", action="store_true", help="bỏ bài kiểm tra biên dịch C++")
     ap.add_argument("--only", default=None,
                     help="chỉ chạy một nhóm: protocol|cpp|voice|flow|session|firmware|"
-                         "fwrun|web|cli|entry")
+                         "fwrun|web|cli|entry|model")
     args = ap.parse_args()
 
     groups = {
@@ -1254,6 +1361,7 @@ def main() -> int:
         "web": test_web,
         "cli": test_cli,
         "entry": test_entry,
+        "model": test_model,
     }
     if args.only:
         groups = {args.only: groups[args.only]}

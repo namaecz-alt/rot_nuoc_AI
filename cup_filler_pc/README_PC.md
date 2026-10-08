@@ -97,7 +97,8 @@ Có GPU NVIDIA CUDA? Thay `--device cpu` bằng `--device 0`. Nếu PC ít RAM, 
 ```text
 cup_filler/
 ├── weights/yolo11n_coco.pt        # model COCO có sẵn lớp cup, chạy ngay
-├── weights/cup_yolo.pt            # xuất hiện sau khi bạn train model riêng
+├── weights/cup_yolo.pt            # xuất hiện sau khi bạn train model cốc riêng
+├── weights/muc_nuoc_yolo.pt       # model mực nước (4 lớp 0-/30-/60-/90- theo chiều cao cốc)
 ├── cupfiller/                     # mã detector/controller/camera/pump
 ├── tools/detect_pc.py             # nhận diện webcam/ảnh/video
 ├── tools/run_pc.py                # UI demo + dry-run
@@ -171,7 +172,7 @@ bằng `--port sim` (bấm "Đặt cốc" ngay trên web).
 .venv\Scripts\python.exe tools\test_comms.py
 ```
 
-Kết quả mong đợi: `183/183 bài đạt` — kiểm tra khung gói + CRC, đối chiếu firmware C++ với
+Kết quả mong đợi: `189/189 bài đạt` — kiểm tra khung gói + CRC, đối chiếu firmware C++ với
 Python từng byte, đọc số tiếng Việt, luồng đặt cốc → CUP_OK → bấm nút → rót, giao diện web,
 cả chương trình `run_pc.py` thật và cả **firmware được chạy thật trên PC** (nhóm `fwrun`:
 nút còn khoá thì bấm không ăn, relay tích cực mức CAO, rót đúng ml, nhấc cốc/mất liên lạc/
