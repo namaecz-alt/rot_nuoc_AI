@@ -24,7 +24,7 @@ Raspberry Pi đảm nhiệm camera/YOLO, quyết định `CUP_OK`, mức đích 
 | Nút mức 1 | **32** | 30%, active LOW / `INPUT_PULLUP` |
 | Nút mức 2 | **33** | 60%, active LOW / `INPUT_PULLUP` |
 | Nút mức 3 | **25** | 90%, active LOW / `INPUT_PULLUP` |
-| Nút START (`button4`) | **26** | active LOW / `INPUT_PULLUP` |
+| Nút START (`button4`) | **26** | active LOW / `INPUT_PULLUP`; nhấn sau nút mức = rót tay, nhấn trước nút mức = chọn bằng giọng nói, nhấn khi bơm = dừng |
 | Relay bơm | **27** | **HIGH = bật bơm** |
 | UART2 RX lên Pi | **16** | nhận từ Pi TXD |
 | UART2 TX lên Pi | **17** | gửi tới Pi RXD |
@@ -121,7 +121,8 @@ Ngoài snapshot 0/1 ở trên, ESP còn gửi:
 - `LEVEL_SELECTED (0x11)`: `index, percent, source`;
 - đồng thời vẫn gửi `PRESET_SELECTED (0x04)` của bản cũ, trong đó ml là
   30/60/90% của `max_ml` hiện hành để code phía host cũ dùng lại được;
-- `START_REQUEST (0x12)`: `selected_index, percent`;
+- `START_REQUEST (0x12)`: `selected_index, percent`, chỉ khi đã nhấn nút mức;
+- `VOICE_REQUEST (0x13)`: payload `FF 00`, khi nhấn START trước mọi nút mức;
 - `BUTTON_EVENT (0x0B)` khi thả nút, index 0/1/2 là mức, index 3 là START.
 
 ## 4. Luồng máy trạng thái và an toàn
@@ -131,11 +132,14 @@ Ngoài snapshot 0/1 ở trên, ESP còn gửi:
   -> INPUT_STATE(sensor=1) + CUP_PLACED
   -> Pi bật camera/nhận diện rồi gửi CUP_OK
   -> ESP mở khoá nút mức/START (kênh audio chạy độc lập)
-chọn mức 30/60/90
-  -> LEVEL_SELECTED
-nhấn START
-  -> INPUT_STATE(start=1) + START_REQUEST
-  -> Pi gửi START_FILL, sau đó PUMP_SET/STOP_FILL theo mực nước camera
+cách tay: chọn mức 30/60/90 rồi nhấn START
+  -> LEVEL_SELECTED + START_REQUEST
+cách nói: nhấn START trước nút mức
+  -> VOICE_REQUEST
+  -> host phát "Bạn muốn mức nước bao nhiêu?" qua loa
+  -> ESP thu câu trả lời bằng mic và gửi AUDIO_CHUNK lên host
+  -> host chỉ nhận 30/60/90%, phát lại mức đã chọn
+  -> Pi kiểm tra an toàn lần cuối rồi gửi START_FILL, sau đó PUMP_SET/STOP_FILL
   -> ESP đóng/mở relay GPIO27 và gửi FILL_PROGRESS/FILL_DONE
 ```
 
@@ -149,7 +153,10 @@ ESP tự ngắt relay không chờ Pi khi:
 - ước lượng quá `max_ml` hoặc quá thời gian bơm.
 
 START chỉ là **yêu cầu** khi `SET_MODE` đang bật chế độ Pi điều khiển bơm (mặc định).
-Điều này giữ nguyên kết cấu cũ: ESP không tự bơm trước khi Pi xác nhận cốc.
+Firmware chỉ coi một lần nhấn nút mức thật trong lượt hiện tại là chọn tay; lựa chọn
+này được reset khi đổi cốc, mất `CUP_OK`, reset hoặc kết thúc lượt bơm. `SET_PRESET`
+từ host không biến START kế tiếp thành START tay. Điều này giữ nguyên kết cấu cũ:
+ESP không tự bơm trước khi Pi xác nhận cốc.
 
 ## 5. Audio hai chiều trên cùng UART
 
@@ -178,12 +185,18 @@ lại chính tiếng loa; đổi `MUTE_MIC_WHILE_SPEAKER` thành `0` nếu cần
 Pi phải gửi PCM loa **đúng nhịp thời gian thực**. ESP chỉ đệm được 8192 mẫu
 (~512 ms); gửi dồn cả file một lần sẽ làm tràn đệm và ESP bỏ mẫu thừa.
 
+Firmware chỉ tạo sự kiện `VOICE_REQUEST`; phần hỏi bằng WAV, chờ loa phát xong,
+nhận dạng PCM mic (Vosk/Whisper/Google) và kiểm tra lại cốc/camera nằm ở host.
+Gói host COCNUOC đầy đủ cho luồng này được phân phối kèm bản rót bằng âm thanh;
+host cũ chưa hiểu `0x13` sẽ bỏ qua gói thay vì tự mở bơm.
+
 ### LCD 2004 I2C
 
 Firmware dùng driver tự chứa trong `lcd_2004_i2c.h` với `Wire.h`, không cần
 `LiquidCrystal_I2C`. Cấu hình ở `pi_config.h`: `USE_LCD_2004=1`, SDA=GPIO21,
 SCL=GPIO22, địa chỉ tự dò `0x27`/`0x3F`. LCD hiện tên máy, trạng thái
-(chờ cốc/chờ camera/sẵn sàng/đang rót/xong/lỗi), mức chọn, duty bơm và liên lạc.
+(chờ cốc/chờ camera/`START=NOI MUC=TAY`/sẵn sàng/đang rót/xong/lỗi), mức chọn tay,
+duty bơm và liên lạc.
 Không có LCD thì firmware vẫn chạy.
 
 Nhiều backpack LCD 5V kéo SDA/SCL lên 5V; ESP32 không chịu 5V trên GPIO. Hãy
@@ -219,19 +232,21 @@ g++ -std=c++11 -O2 -Wall \
 /tmp/test_pi_protocol
 ```
 
-Kết quả mong đợi: `8 dung / 0 sai`, kèm ví dụ frame `INPUT_STATE` ở trên.
+Kết quả mong đợi: `9 dung / 0 sai`, kèm ví dụ frame `INPUT_STATE` ở trên.
 
 Có thêm `host_test/test_pi_run.cpp` chạy thật logic `.ino` trên máy ảo Arduino của
 repo: nó kéo GPIO34/26/32/33/25 xuống LOW, giải mã frame ESP gửi ra và kiểm tra
-relay GPIO27 chỉ bật sau `CUP_OK -> START_FILL`. Lệnh biên dịch đầy đủ nằm ở đầu file;
-kết quả mong đợi là `10 dung / 0 sai`.
+relay GPIO27 chỉ bật sau `CUP_OK -> START_FILL`, START trước nút mức tạo
+`VOICE_REQUEST`, còn nút mức rồi START vẫn tạo `START_REQUEST`. Lệnh biên dịch đầy
+đủ nằm ở đầu file; kết quả mong đợi là `12 dung / 0 sai`.
 
 ## 8. Thứ tự test an toàn trên mạch thật
 
 1. Chưa nối bơm: nạp firmware, xem USB log, nghe tiếng bíp khởi động để xác nhận loa.
 2. Chưa nối Pi cũng được: nhấn từng nút và che cảm biến; kiểm tra phía Pi/serial
    capture thấy payload đổi đúng thứ tự cảm biến, START, mức 1/2/3.
-3. Nối Pi, cho Pi gửi `PING` và `CUP_OK`; chọn mức và nhấn START, xác nhận Pi nhận
-   `LEVEL_SELECTED` + `START_REQUEST`, nhưng relay chỉ đóng sau `START_FILL/PUMP_SET`.
+3. Nối Pi, cho Pi gửi `PING` và `CUP_OK`; nhấn START trước phải thấy `VOICE_REQUEST`.
+   Sau đó chọn nút mức rồi START, xác nhận Pi nhận `LEVEL_SELECTED` + `START_REQUEST`,
+   nhưng relay chỉ đóng sau `START_FILL/PUMP_SET`.
 4. Nối relay với tải giả/LED trước, kiểm tra mất cốc và rút UART khi bơm đều ngắt.
 5. Cuối cùng mới nối bơm thật và hiệu chuẩn `FLOW_ML_PER_S` trong `pi_config.h`.

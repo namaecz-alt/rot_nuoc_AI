@@ -132,6 +132,19 @@ int main() {
   runLoops(10);
   takeFrames();
 
+  stub_set_pin(26, LOW);
+  runLoops(40);
+  {
+    std::vector<proto::Frame> fs = takeFrames();
+    check(hasMsg(fs, piproto::VOICE_REQUEST),
+          "START truoc nut muc -> VOICE_REQUEST");
+    check(!hasMsg(fs, piproto::START_REQUEST),
+          "START truoc nut muc khong gui START_REQUEST");
+  }
+  stub_set_pin(26, HIGH);
+  runLoops(40);
+  takeFrames();
+
   stub_set_pin(33, LOW);
   runLoops(40);
   check(hasMsg(takeFrames(), piproto::LEVEL_SELECTED),

@@ -4,7 +4,7 @@
 //  Khung truyền giữ đúng bản cũ:
 //      AA 55 | LEN | SEQ | MSG | PAYLOAD | CRC16-CCITT-FALSE (LE)
 //
-//  Chỉ thêm 4 mã gói chưa dùng trong protocol.h cũ:
+//  Chỉ thêm các mã gói chưa dùng trong protocol.h cũ:
 //    ESP32 -> Pi:
 //      0x10 INPUT_STATE     payload ĐÚNG 5 byte, thứ tự yêu cầu:
 //                           [0] cảm biến
@@ -16,6 +16,8 @@
 //                           / nút đang được nhấn (đã đổi từ active-LOW sang logic).
 //      0x11 LEVEL_SELECTED  index:u8, percent:u8, source:u8
 //      0x12 START_REQUEST   selected_index:u8 (0xFF = chưa chọn), percent:u8
+//      0x13 VOICE_REQUEST   selected_index=0xFF, percent=0; START được nhấn
+//                           trước mọi nút mức, host sẽ hỏi mức bằng giọng nói
 //    Pi -> ESP32:
 //      0x8E SPEAKER_AUDIO   seq8:u8, flags:u8, n:u16, PCM mono int16 LE 16 kHz
 //      0x8F AUDIO_CTRL      mic_enable:u8, mic_continuous:u8,
@@ -35,6 +37,7 @@ enum Msg : uint8_t {
   INPUT_STATE    = 0x10,
   LEVEL_SELECTED = 0x11,
   START_REQUEST  = 0x12,
+  VOICE_REQUEST  = 0x13,
 
   SPEAKER_AUDIO  = 0x8E,
   AUDIO_CTRL     = 0x8F,
@@ -70,6 +73,13 @@ inline size_t encStartRequest(proto::Writer &w, uint8_t seq,
   w.begin(START_REQUEST, seq);
   w.u8(selectedIndex);
   w.u8(percent);
+  return w.end();
+}
+
+inline size_t encVoiceRequest(proto::Writer &w, uint8_t seq) {
+  w.begin(VOICE_REQUEST, seq);
+  w.u8(NO_LEVEL);  // chưa có nút mức vật lý nào được chọn
+  w.u8(0);
   return w.end();
 }
 

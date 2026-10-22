@@ -217,6 +217,13 @@ class PiLink {
                                             percent));
   }
 
+  // START GPIO26 trước khi chọn nút mức: nhờ host hỏi/nhận diện mức bằng loa+mic.
+  void voiceRequest() {
+    uint8_t tx[40];
+    proto::Writer w(tx, sizeof(tx));
+    writeFrame(tx, piproto::encVoiceRequest(w, nextSeq()));
+  }
+
   // Mic PCM (gọi từ audio task): dùng AUDIO_CHUNK của giao thức cũ.
   void audioChunk(const int16_t *samples, uint16_t n, uint8_t flags) {
     if (flags & proto::AU_START) _audioSeq = 0;

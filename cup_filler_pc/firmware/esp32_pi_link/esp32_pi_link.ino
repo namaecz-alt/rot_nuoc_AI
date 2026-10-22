@@ -8,8 +8,12 @@
 //       -> ESP32 gửi INPUT_STATE + CUP_PLACED qua USB/UART2 (961000 baud)
 //       -> Pi lúc đó mới bật camera, nhận diện cốc, trả CUP_OK
 //       -> ESP32 MỞ KHOÁ 3 nút mức + START + mic
-//    Nút mức GPIO32/33/25 = 30/60/90%
-//    START GPIO26 -> START_REQUEST; Pi trả START_FILL/PUMP_SET để chạy relay
+//    Nút mức GPIO32/33/25 = 30/60/90%, sau đó START GPIO26
+//       -> START_REQUEST; Pi trả START_FILL/PUMP_SET để chạy relay
+//    Nhấn START GPIO26 trước mọi nút mức -> VOICE_REQUEST (0x13):
+//       host phát "Bạn muốn mức nước bao nhiêu?" qua loa, mic ghi câu trả
+//       lời, host nhận 30/60/90%, phát lại mức rồi mới tự rót nếu an toàn
+//    START trong lúc đang bơm vẫn là dừng bơm ngay tại ESP32
 //    Relay GPIO27, tích cực mức CAO
 //    INMP441 mic -> AUDIO_CHUNK PCM lên Pi
 //    Pi -> SPEAKER_AUDIO PCM xuống ESP32 -> MAX98357A -> loa
@@ -51,6 +55,10 @@ static bool g_piHelloAck = false;
 static bool g_cupConfirmed = false;
 static bool g_piControlsPump = true;       // Pi vòng kín là mặc định
 static uint8_t g_selectedLevel = DEFAULT_LEVEL_INDEX;
+// Chỉ true khi người dùng thực sự nhấn một trong ba nút mức trong lượt này.
+// g_selectedLevel vẫn giữ mặc định 60% cho chế độ ESP tự rót dự phòng, nhưng
+// START khi cờ này false phải mở chọn mức bằng giọng nói thay vì rót ngay.
+static bool g_manualLevelSelected = false;
 
 static uint32_t g_now = 0;
 static uint32_t g_tFillStart = 0;
@@ -78,6 +86,11 @@ static bool unlocked() {
   InputSnapshot s = g_inputs.snapshot();
   return s.sensor && g_cupConfirmed && g_state != proto::ST_POURING &&
          g_state != proto::ST_FAULT;
+}
+
+static void resetManualLevelSelection() {
+  g_manualLevelSelected = false;
+  g_selectedLevel = DEFAULT_LEVEL_INDEX;
 }
 
 static uint8_t statusFlags() {
@@ -181,7 +194,9 @@ static const char *lcdStateLine() {
   switch (g_state) {
     case proto::ST_BOOT:    return "DANG KHOI DONG...";
     case proto::ST_WAIT_PC: return "CHO CAMERA XAC NHAN";
-    case proto::ST_READY:   return "SAN SANG: NHAN START";
+    case proto::ST_READY:
+      return g_manualLevelSelected ? "SAN SANG: NHAN START"
+                                    : "START=NOI MUC=TAY";
     case proto::ST_DONE:    return "ROT XONG! LAY COC RA";
     case proto::ST_FAULT:   return "LOI: KIEM TRA MAY";
     case proto::ST_MANUAL:  return "CHE DO THU CONG";
@@ -223,10 +238,14 @@ static void updateLcd(uint32_t now) {
   }
 
   char linePump[21];
-  snprintf(linePump, sizeof(linePump), "MUC:%u%% BOM:%s%u%%",
-           (unsigned int)levelPct,
-           g_pump.relayOn() ? "ON " : "OFF",
-           (unsigned int)g_pump.duty());
+  if (g_state == proto::ST_POURING || g_manualLevelSelected) {
+    snprintf(linePump, sizeof(linePump), "MUC:%u%% BOM:%s%u%%",
+             (unsigned int)levelPct,
+             g_pump.relayOn() ? "ON " : "OFF",
+             (unsigned int)g_pump.duty());
+  } else {
+    snprintf(linePump, sizeof(linePump), "MUC:CHUA CHON TAY");
+  }
 
   char lineLink[21];
   if (g_state == proto::ST_POURING) {
@@ -269,6 +288,7 @@ static bool startPour(uint16_t ml, uint8_t mode, uint8_t source) {
                    g_now);
   g_tFillStart = g_now;
   g_pulseEndMs = 0;
+  resetManualLevelSelection();
   g_state = proto::ST_POURING;
   g_link.fillStarted(roundMl(target), g_pump.mode(), source,
                      roundMl(g_pump.maxMl()));
@@ -289,6 +309,7 @@ static void endPour(uint8_t stopReason) {
                   stopReason, elapsed);
 
   InputSnapshot s = g_inputs.snapshot();
+  resetManualLevelSelection();
   g_state = (s.sensor && g_cupConfirmed) ? proto::ST_DONE : proto::ST_IDLE;
   sendStatus();
 }
@@ -322,6 +343,7 @@ static void handleFrame(const proto::Frame &f) {
       if (!proto::parseCupOk(p, n, ok)) break;
       if (ok.max_ml > 0) g_pump.setMaxMl((float)ok.max_ml);
       if (g_inputs.snapshot().sensor) {
+        if (!g_cupConfirmed) resetManualLevelSelection();
         g_cupConfirmed = true;
         if (g_state != proto::ST_POURING) g_state = proto::ST_READY;
         g_audio.beep(1320, 70);
@@ -334,6 +356,7 @@ static void handleFrame(const proto::Frame &f) {
     case proto::CUP_REJECT: {
       proto::CupReject rj;
       if (!proto::parseCupReject(p, n, rj)) break;
+      resetManualLevelSelection();
       g_cupConfirmed = false;
       if (g_inputs.snapshot().sensor) g_state = proto::ST_WAIT_PC;
       sendStatus();
@@ -345,8 +368,12 @@ static void handleFrame(const proto::Frame &f) {
       if (!proto::parseSetPreset(p, n, sp)) break;
       if (sp.index < N_LEVEL_BUTTONS) {
         g_selectedLevel = sp.index;
+        g_manualLevelSelected = false;  // host chọn hộ không phải nút vật lý
+        uint8_t source = (sp.source <= proto::SRC_AUTO)
+                             ? sp.source
+                             : (uint8_t)proto::SRC_PC;
         g_link.levelSelected(g_selectedLevel,
-                             LEVEL_PERCENT[g_selectedLevel], proto::SRC_PC);
+                             LEVEL_PERCENT[g_selectedLevel], source);
       }
       g_link.ack(proto::SET_PRESET, 0);
       break;
@@ -428,11 +455,13 @@ static void handleFrame(const proto::Frame &f) {
       proto::CmdArg ca;
       if (!proto::parseCmd(p, n, ca)) break;
       if (ca.cmd == proto::CMD_DISARM) {
+        resetManualLevelSelection();
         g_cupConfirmed = false;
         if (g_state == proto::ST_POURING) endPour(proto::STOP_PC_REQUEST);
         g_state = g_inputs.snapshot().sensor ? proto::ST_WAIT_PC
                                              : proto::ST_IDLE;
       } else if (ca.cmd == proto::CMD_RESET_STATE) {
+        resetManualLevelSelection();
         g_cupConfirmed = false;
         g_waitErrorSent = false;
         if (g_state == proto::ST_POURING) endPour(proto::STOP_PC_REQUEST);
@@ -465,6 +494,7 @@ static void handleInputEvents(const InputEvents &ev) {
 
   // --- cảm biến cốc ---
   if (ev.pressedMask & sensorBit) {
+    resetManualLevelSelection();
     g_cupConfirmed = false;
     g_waitErrorSent = false;
     g_tCupPlaced = g_now;
@@ -475,6 +505,7 @@ static void handleInputEvents(const InputEvents &ev) {
     sendStatus();
   }
   if (ev.releasedMask & sensorBit) {
+    resetManualLevelSelection();
     g_cupConfirmed = false;
     if (g_state == proto::ST_POURING) endPour(proto::STOP_CUP_REMOVED);
     g_link.cupRemoved(proto::STOP_CUP_REMOVED, g_now);
@@ -490,6 +521,7 @@ static void handleInputEvents(const InputEvents &ev) {
         g_link.log("Dang bom: bo qua nut chon muc");
       } else if (unlocked()) {
         g_selectedLevel = i;
+        g_manualLevelSelected = true;
         g_link.levelSelected(i, LEVEL_PERCENT[i], proto::SRC_BUTTON);
         g_link.presetSelected(i, roundMl(selectedTargetMl()),
                               proto::SRC_BUTTON);
@@ -511,10 +543,24 @@ static void handleInputEvents(const InputEvents &ev) {
       endPour(proto::STOP_BUTTON_ESTOP);
       g_link.log("START khi dang bom -> dung bom");
     } else if (unlocked()) {
-      uint8_t pct = LEVEL_PERCENT[g_selectedLevel];
-      g_link.startRequest(g_selectedLevel, pct);
-      g_audio.beep(1040, 70);
-      if (!g_piControlsPump) {
+      if (g_manualLevelSelected) {
+        uint8_t pct = LEVEL_PERCENT[g_selectedLevel];
+        g_link.startRequest(g_selectedLevel, pct);
+        g_audio.beep(1040, 70);
+        if (!g_piControlsPump) {
+          startPour(0, proto::MODE_ESP_OPEN_LOOP, proto::SRC_BUTTON);
+        }
+      } else if (g_piControlsPump) {
+        // START trước nút mức = nút 4 chọn bằng giọng nói. Host sẽ phát
+        // câu hỏi qua SPEAKER_AUDIO, nhận PCM mic và tự START_FILL sau.
+        g_link.voiceRequest();
+        g_audio.beep(1240, 70);
+      } else {
+        // Không có host vòng kín thì không có STT: giữ hành vi dự phòng cũ
+        // bằng mức mặc định thay vì chờ một phiên giọng nói không tồn tại.
+        uint8_t pct = LEVEL_PERCENT[g_selectedLevel];
+        g_link.startRequest(g_selectedLevel, pct);
+        g_audio.beep(1040, 70);
         startPour(0, proto::MODE_ESP_OPEN_LOOP, proto::SRC_BUTTON);
       }
     } else {
@@ -621,6 +667,7 @@ void loop() {
       g_link.fillDone(roundMl(g_pump.pouredMl()),
                       roundMl(g_pump.targetMl()), reason, elapsed);
       InputSnapshot s = g_inputs.snapshot();
+      resetManualLevelSelection();
       g_state = (s.sensor && g_cupConfirmed) ? proto::ST_DONE : proto::ST_IDLE;
       sendStatus();
     }

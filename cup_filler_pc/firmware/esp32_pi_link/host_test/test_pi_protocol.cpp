@@ -56,6 +56,13 @@ int main() {
   size_t n2 = piproto::encStartRequest(w2, 7, 2, 90);
   check(n2 > 0 && buf2[4] == piproto::START_REQUEST, "START_REQUEST msg=0x12");
 
+  uint8_t bufVoice[64];
+  proto::Writer wVoice(bufVoice, sizeof(bufVoice));
+  size_t nVoice = piproto::encVoiceRequest(wVoice, 7);
+  check(nVoice == 9 && bufVoice[4] == piproto::VOICE_REQUEST &&
+            bufVoice[5] == piproto::NO_LEVEL && bufVoice[6] == 0,
+        "VOICE_REQUEST msg=0x13 payload=[FF 00]");
+
   // SPEAKER_AUDIO payload do Pi tạo: seq8=9, flags=START, 3 mẫu [-2,0,300].
   const uint8_t spk[] = {9, 1, 3, 0, 0xFE, 0xFF, 0x00, 0x00, 0x2C, 0x01};
   piproto::SpeakerAudioView v;
