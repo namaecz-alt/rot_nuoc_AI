@@ -77,6 +77,19 @@ UART đặt theo yêu cầu:
 Pi phải mở đúng `961000`. Nếu bản OS/driver của Pi không chấp nhận baud lẻ này,
 đổi **cả hai phía** sang `921600` tại `PI_UART_BAUD` — băng thông vẫn dư.
 
+### Tuỳ chọn test bằng máy tính qua USB board
+
+Mặc định `PI_LINK_TRANSPORT=PI_LINK_TRANSPORT_UART2` để Pi dùng GPIO16/17 và USB
+còn xem log. Nếu không có USB-TTL và muốn máy tính nói chuyện qua chính cáp USB
+của board, chọn một trong hai cách:
+
+- PlatformIO env `esp32dev_pi_usb`: chỉ dùng USB board;
+- PlatformIO env `esp32dev_pi_auto`: nghe cả USB board và UART2, cổng gửi khung
+  hợp lệ trước sẽ thành host đang hoạt động.
+
+Ở hai env này, cổng COM của board truyền AA55 ở **961000 baud**, log chữ USB tự
+tắt và phải đóng Serial Monitor trước khi chương trình Python mở cổng.
+
 ## 3. Thứ tự byte trạng thái đúng yêu cầu
 
 ESP32 gửi gói mới `INPUT_STATE`, mã gói `0x10`, khi bất kỳ ngõ vào nào đổi trạng
@@ -180,9 +193,11 @@ dùng level-shifter I2C hai chiều hoặc đảm bảo pull-up bus ở phía 3V
 
 ### Cách khuyến nghị: VS Code + PlatformIO
 
-Mở thư mục `cup_filler_pc/pi_esp32` trong VS Code, chọn env `esp32dev_pi`, bấm
-Build rồi Upload. Serial Monitor mở cổng USB của ESP32 ở **115200** để xem log;
-kênh Pi ở UART2 độc lập với log.
+Mở thư mục `cup_filler_pc/pi_esp32` trong VS Code. Chọn env `esp32dev_pi` cho
+Raspberry Pi/UART2, hoặc `esp32dev_pi_usb` / `esp32dev_pi_auto` khi test bằng máy
+tính qua cáp USB của board. Bấm Build rồi Upload. Chỉ env `esp32dev_pi` mới mở
+Serial Monitor cổng USB ở **115200** để xem log; kênh Pi ở UART2 độc lập với log.
+Hai env USB/AUTO dùng cổng board làm kênh dữ liệu 961000 baud.
 
 ### Arduino IDE
 

@@ -1,7 +1,14 @@
 # pi_esp32 — PlatformIO cho bản ESP32 nối Raspberry Pi
 
 Đây là thư mục project VS Code + PlatformIO của firmware mới. Mở đúng thư mục này,
-chọn môi trường **`esp32dev_pi`**, rồi Build/Upload.
+rồi chọn môi trường phù hợp:
+
+- **`esp32dev_pi`**: Raspberry Pi qua UART2 GPIO16/17, USB để xem log 115200.
+- **`esp32dev_pi_usb`**: máy tính qua chính cáp USB của board, dữ liệu 961000 baud.
+- **`esp32dev_pi_auto`**: nghe cả USB board và UART2, tự chọn cổng host hợp lệ.
+
+Sau đó Build/Upload. Với hai env USB/AUTO phải đóng Serial Monitor trước khi
+chương trình Python mở cổng COM của board.
 
 Mã nguồn thật nằm ở `../firmware/esp32_pi_link/`:
 

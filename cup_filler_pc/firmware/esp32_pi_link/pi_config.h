@@ -30,12 +30,42 @@
 #define PI_FW_NAME            "esp32_pi_link"
 #define PI_FW_VERSION_MAJOR   2
 #define PI_FW_VERSION_MINOR   0
+
+// Chọn đường truyền dữ liệu tới Pi/máy tính:
+//   0 = AUTO: nghe cả USB của board và UART2; cổng nào gửi khung AA55 hợp lệ
+//       trước sẽ trở thành cổng host đang hoạt động.
+//   1 = chỉ UART2 GPIO16/17 (mặc định cho Pi); USB còn dùng xem log 115200.
+//   2 = chỉ USB của board (test bằng máy tính, không cần USB-TTL).
+// Khi USB mang dữ liệu AA55 (mode 0/2), log chữ trên USB bắt buộc tắt để
+// không trộn vào khung nhị phân. PlatformIO có env riêng cho mode USB/AUTO.
+#define PI_LINK_TRANSPORT_AUTO       0
+#define PI_LINK_TRANSPORT_UART2      1
+#define PI_LINK_TRANSPORT_USB_SERIAL 2
+#ifndef PI_LINK_TRANSPORT
+#define PI_LINK_TRANSPORT PI_LINK_TRANSPORT_UART2
+#endif
+#define PI_LINK_USE_UART2 \
+  (PI_LINK_TRANSPORT == PI_LINK_TRANSPORT_AUTO || \
+   PI_LINK_TRANSPORT == PI_LINK_TRANSPORT_UART2)
+#define PI_LINK_USE_USB \
+  (PI_LINK_TRANSPORT == PI_LINK_TRANSPORT_AUTO || \
+   PI_LINK_TRANSPORT == PI_LINK_TRANSPORT_USB_SERIAL)
+#if PI_LINK_USE_USB
+#ifdef DEBUG_SERIAL
+#undef DEBUG_SERIAL
+#endif
+#define DEBUG_SERIAL          0        // USB đang truyền AA55, không in log chữ
+#else
+#ifndef DEBUG_SERIAL
 #define DEBUG_SERIAL          1        // log USB Serial Monitor 115200; KHÔNG lẫn UART2
+#endif
+#endif
 #define DEBUG_BAUD            115200
 
 // ---------------------------------------------------------------------------
-//  UART2 nối Raspberry Pi (header H1: 1=TX2, 2=RX2, 3=GND)
+//  Mặc định UART2 nối Raspberry Pi (header H1: 1=TX2, 2=RX2, 3=GND):
 //  ESP32 TX2 -> Pi RXD, ESP32 RX2 <- Pi TXD, GND chung.
+//  Nếu chọn AUTO/USB ở PI_LINK_TRANSPORT, dữ liệu cũng đi qua cáp USB board.
 //
 //  Theo yêu cầu dùng 961000 baud. Cả ESP32 và Pi phải mở ĐÚNG tốc độ này.
 //  Nếu driver UART của Pi không nhận baud lẻ, đổi CẢ HAI BÊN thành 921600
@@ -142,6 +172,12 @@ static_assert(!piPinIsFlash(PIN_PI_UART_RX) && !piPinIsFlash(PIN_PI_UART_TX),
               "UART2 khong duoc dung GPIO6..11 (flash)");
 static_assert(!piPinInputOnly(PIN_PI_UART_RX) && !piPinInputOnly(PIN_PI_UART_TX),
               "UART2 khong duoc dung GPIO34..39 (input-only)");
+static_assert(PI_LINK_TRANSPORT == PI_LINK_TRANSPORT_AUTO ||
+              PI_LINK_TRANSPORT == PI_LINK_TRANSPORT_UART2 ||
+              PI_LINK_TRANSPORT == PI_LINK_TRANSPORT_USB_SERIAL,
+              "PI_LINK_TRANSPORT chi duoc la AUTO(0), UART2(1) hoac USB(2)");
+static_assert(!PI_LINK_USE_USB || !DEBUG_SERIAL,
+              "USB truyen du lieu AA55 thi khong duoc in log chu DEBUG_SERIAL");
 static_assert(PIN_CUP_SENSOR == 34, "So do rev Pi: cam bien cb phai o GPIO34");
 static_assert(!piPinInputOnly(PIN_START_BUTTON) &&
               !piPinInputOnly(LEVEL_BUTTON_PINS[0]) &&

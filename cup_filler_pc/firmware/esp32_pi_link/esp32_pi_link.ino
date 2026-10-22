@@ -5,7 +5,7 @@
 //  đổi sang sơ đồ chân rev mới:
 //
 //    Cảm biến cốc GPIO34
-//       -> ESP32 gửi INPUT_STATE + CUP_PLACED qua UART2 (961000 baud)
+//       -> ESP32 gửi INPUT_STATE + CUP_PLACED qua USB/UART2 (961000 baud)
 //       -> Pi lúc đó mới bật camera, nhận diện cốc, trả CUP_OK
 //       -> ESP32 MỞ KHOÁ 3 nút mức + START + mic
 //    Nút mức GPIO32/33/25 = 30/60/90%

@@ -1,8 +1,12 @@
 // ===========================================================================
-//  pi_link.h - UART2 ESP32 <-> RASPBERRY PI, 961000 baud
+//  pi_link.h - ESP32 <-> MÁY TÍNH/Pi, 961000 baud
 //
-//  * Serial2: RX=GPIO16, TX=GPIO17 (header H1 trên sơ đồ)
-//  * USB Serial vẫn riêng cho debug 115200, không lẫn dữ liệu Pi
+//  * Mode AUTO: Serial (USB board) và Serial2
+//    (RX=GPIO16, TX=GPIO17) cùng nghe; cổng gửi khung hợp lệ đầu tiên sẽ
+//    thành cổng host đang hoạt động. Trước khi chọn được cổng, HELLO/
+//    INPUT_STATE được gửi ra cả hai để máy tính cắm cách nào cũng thấy ESP.
+//  * Mode UART2: chỉ Serial2 mang dữ liệu, USB còn riêng cho debug 115200.
+//  * Mode USB: chỉ Serial của board mang dữ liệu; debug chữ tự tắt.
 //  * Task audio và loop() đều có thể gửi frame; mọi lần ghi UART đi qua mutex
 //    nên hai frame không bao giờ xen byte vào nhau.
 //  * Nhận: đọc không chặn theo ngân sách byte, Decoder cũ tự tìm lại AA55 sau
@@ -22,22 +26,75 @@ class PiLink {
  public:
   void begin() {
     _txMutex = xSemaphoreCreateMutex();
+#if PI_LINK_USE_UART2
     Serial2.setRxBufferSize(PI_UART_RX_BUFFER);
     Serial2.setTxBufferSize(PI_UART_TX_BUFFER);
     Serial2.begin(PI_UART_BAUD, SERIAL_8N1, PIN_PI_UART_RX, PIN_PI_UART_TX);
+#endif
+#if PI_LINK_USE_USB
+    Serial.setRxBufferSize(PI_UART_RX_BUFFER);
+    Serial.setTxBufferSize(PI_UART_TX_BUFFER);
+    Serial.begin(PI_UART_BAUD, SERIAL_8N1);
+#endif
   }
 
   bool everRx() const { return _lastRxMs != 0; }
   uint32_t lastRxMs() const { return _lastRxMs; }
-  size_t txFree() { return Serial2.availableForWrite(); }
+  uint8_t activeTransport() const { return _activePort; }
+  size_t txFree() {
+#if PI_LINK_TRANSPORT == PI_LINK_TRANSPORT_AUTO
+    if (_activePort == PORT_UART2) return (size_t)Serial2.availableForWrite();
+    if (_activePort == PORT_USB) return (size_t)Serial.availableForWrite();
+    size_t uartFree = (size_t)Serial2.availableForWrite();
+    size_t usbFree = (size_t)Serial.availableForWrite();
+    return uartFree < usbFree ? uartFree : usbFree;
+#elif PI_LINK_USE_UART2
+    return (size_t)Serial2.availableForWrite();
+#else
+    return (size_t)Serial.availableForWrite();
+#endif
+  }
 
   template <typename F>
   void poll(uint32_t nowMs, F onFrame, uint32_t budget = PI_UART_POLL_BUDGET) {
-    while (budget-- > 0 && Serial2.available() > 0) {
-      if (_dec.push((uint8_t)Serial2.read())) _lastRxMs = nowMs;
-      while (_dec.pop(_frame)) onFrame(_frame);
+#if PI_LINK_TRANSPORT == PI_LINK_TRANSPORT_AUTO
+    // Host cũ im lặng quá hạn liên lạc: mở khóa để cổng còn lại có thể
+    // nhận HELLO/INPUT_STATE và trở thành host mới.
+    if (_activePort != PORT_NONE && _lastRxMs != 0 &&
+        (nowMs - _lastRxMs) >= LINK_TIMEOUT_MS) {
+      _activePort = PORT_NONE;
     }
-    while (_dec.pop(_frame)) onFrame(_frame);
+#else
+    (void)nowMs;
+#endif
+
+#if PI_LINK_USE_UART2
+    {
+      uint32_t portBudget = budget;
+      while (portBudget-- > 0 && Serial2.available() > 0) {
+        if (_decUart2.push((uint8_t)Serial2.read())) {
+          _lastRxMs = nowMs;
+          _activePort = PORT_UART2;
+        }
+        while (_decUart2.pop(_frame)) onFrame(_frame);
+      }
+      while (_decUart2.pop(_frame)) onFrame(_frame);
+    }
+#endif
+
+#if PI_LINK_USE_USB
+    {
+      uint32_t portBudget = budget;
+      while (portBudget-- > 0 && Serial.available() > 0) {
+        if (_decUsb.push((uint8_t)Serial.read())) {
+          _lastRxMs = nowMs;
+          _activePort = PORT_USB;
+        }
+        while (_decUsb.pop(_frame)) onFrame(_frame);
+      }
+      while (_decUsb.pop(_frame)) onFrame(_frame);
+    }
+#endif
   }
 
   // ---------------------------------------------------- ESP32 -> Pi: chung --
@@ -180,13 +237,41 @@ class PiLink {
   void writeFrame(const uint8_t *buf, size_t len) {
     if (buf == NULL || len == 0) return;
     if (_txMutex != NULL) xSemaphoreTake(_txMutex, portMAX_DELAY);
-    Serial2.write(buf, len);
+    const uint8_t active = _activePort;
+#if PI_LINK_USE_UART2
+    if (active == PORT_NONE || active == PORT_UART2) {
+      Serial2.write(buf, len);
+    }
+#endif
+#if PI_LINK_USE_USB
+    if (active == PORT_NONE || active == PORT_USB) {
+      Serial.write(buf, len);
+    }
+#endif
     if (_txMutex != NULL) xSemaphoreGive(_txMutex);
   }
 
+  enum PortId : uint8_t {
+    PORT_NONE = 0,
+    PORT_UART2 = PI_LINK_TRANSPORT_UART2,
+    PORT_USB = PI_LINK_TRANSPORT_USB_SERIAL,
+  };
+
   SemaphoreHandle_t _txMutex = NULL;
-  proto::Decoder _dec;
+#if PI_LINK_USE_UART2
+  proto::Decoder _decUart2;
+#endif
+#if PI_LINK_USE_USB
+  proto::Decoder _decUsb;
+#endif
   proto::Frame _frame;
+#if PI_LINK_TRANSPORT == PI_LINK_TRANSPORT_UART2
+  volatile uint8_t _activePort = PORT_UART2;
+#elif PI_LINK_TRANSPORT == PI_LINK_TRANSPORT_USB_SERIAL
+  volatile uint8_t _activePort = PORT_USB;
+#else
+  volatile uint8_t _activePort = PORT_NONE;
+#endif
   uint8_t _seq = 0;
   uint8_t _audioSeq = 0;
   uint32_t _lastRxMs = 0;
