@@ -10,7 +10,8 @@ ESP32 đảm nhiệm phần cứng thời gian thực:
 - 3 nút mức + nút START;
 - relay bơm và các chốt an toàn tại chỗ;
 - mic INMP441: gửi PCM lên Pi;
-- loa MAX98357A: phát PCM Pi gửi xuống.
+- loa MAX98357A: phát PCM Pi gửi xuống;
+- LCD 2004 I2C: hiển thị trạng thái, mức chọn và tiến trình tại chỗ.
 
 Raspberry Pi đảm nhiệm camera/YOLO, quyết định `CUP_OK`, mức đích và lệnh
 `START_FILL` / `PUMP_SET` / `STOP_FILL`.
@@ -31,7 +32,7 @@ Raspberry Pi đảm nhiệm camera/YOLO, quyết định `CUP_OK`, mức đích 
 | I2S LRCLK/WS | **19** | dùng chung mic + loa |
 | INMP441 SD/DOUT | **23** | mic -> ESP32 |
 | MAX98357A DIN | **13\*** | ESP32 -> loa |
-| I2C SDA/SCL dự phòng | 21/22 | bản này chưa dùng |
+| LCD 2004 I2C SDA/SCL | **21/22** | HD44780 + PCF8574; tự dò 0x27/0x3F |
 
 > \* Ảnh crop không hiện net `DIN` của MAX98357A nối vào chân ESP nào. Code đang đặt
 > `PIN_I2S_SPK_DIN = 13` trong `pi_config.h`. Hãy đối chiếu sơ đồ đầy đủ; nếu DIN ở
@@ -163,6 +164,17 @@ lại chính tiếng loa; đổi `MUTE_MIC_WHILE_SPEAKER` thành `0` nếu cần
 
 Pi phải gửi PCM loa **đúng nhịp thời gian thực**. ESP chỉ đệm được 8192 mẫu
 (~512 ms); gửi dồn cả file một lần sẽ làm tràn đệm và ESP bỏ mẫu thừa.
+
+### LCD 2004 I2C
+
+Firmware dùng driver tự chứa trong `lcd_2004_i2c.h` với `Wire.h`, không cần
+`LiquidCrystal_I2C`. Cấu hình ở `pi_config.h`: `USE_LCD_2004=1`, SDA=GPIO21,
+SCL=GPIO22, địa chỉ tự dò `0x27`/`0x3F`. LCD hiện tên máy, trạng thái
+(chờ cốc/chờ camera/sẵn sàng/đang rót/xong/lỗi), mức chọn, duty bơm và liên lạc.
+Không có LCD thì firmware vẫn chạy.
+
+Nhiều backpack LCD 5V kéo SDA/SCL lên 5V; ESP32 không chịu 5V trên GPIO. Hãy
+dùng level-shifter I2C hai chiều hoặc đảm bảo pull-up bus ở phía 3V3.
 
 ## 6. Nạp firmware
 

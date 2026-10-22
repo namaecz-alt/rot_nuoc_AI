@@ -8,7 +8,7 @@
 //    * button4 = START .................. GPIO26
 //    * relay bơm ........................ GPIO27 (tích cực mức CAO)
 //    * UART2 lên Raspberry Pi ........... RX2=GPIO16, TX2=GPIO17, 961000 baud
-//    * I2C dự phòng ..................... SDA=GPIO21, SCL=GPIO22 (bản này chưa dùng)
+//    * LCD 2004 I2C ...................... SDA=GPIO21, SCL=GPIO22 (PCF8574)
 //    * I2S dùng chung BCLK/LRCLK ........ GPIO18 / GPIO19
 //    * INMP441 SD (mic -> ESP32) ........ GPIO23
 //    * MAX98357A DIN (ESP32 -> loa) ..... GPIO13  <-- ẢNH CROP CHƯA HIỆN NET NÀY.
@@ -107,9 +107,18 @@ static constexpr uint8_t LEVEL_PERCENT[N_LEVEL_BUTTONS]     = {30, 60, 90};
 #define SPEAKER_VOLUME_PCT    80
 #define SPEAKER_RING_SAMPLES  8192     // ~512 ms PCM mono 16 kHz
 
-// I2C trên sơ đồ (chưa dùng trong bản này, giữ để tránh cấp trùng chân)
+// ---------------------------------------------------------------------------
+//  LCD 2004 I2C (HD44780 + PCF8574 backpack)
+//  SDA=GPIO21, SCL=GPIO22. LCD_I2C_ADDRESS=0 nghia la tu do 0x27/0x3F;
+//  neu module cua ban co dia chi co dinh khac, dien truc tiep o day.
+//  Khong can cai LiquidCrystal_I2C vi sketch da co lcd_2004_i2c.h.
+// ---------------------------------------------------------------------------
+#define USE_LCD_2004          1        // 0 = tat hoan toan code LCD
 #define PIN_I2C_SDA           21
 #define PIN_I2C_SCL           22
+#define LCD_I2C_ADDRESS       0        // 0=auto (0x27/0x3F), hoac 0x27/0x3F
+#define LCD_I2C_FREQ_HZ       100000   // PCF8574 pho bien chi nen chay 100 kHz
+#define LCD_UPDATE_MS         200      // chi ghi lai dong thay doi
 
 // ---------------------------------------------------------------------------
 //  Nhịp giao tiếp / an toàn
@@ -151,6 +160,14 @@ static_assert(!piPinIsFlash(PIN_I2S_BCLK) && !piPinIsFlash(PIN_I2S_LRCLK) &&
               "I2S khong duoc dung GPIO6..11");
 static_assert(PIN_I2S_MIC_SD != PIN_I2S_SPK_DIN,
               "Mic SD va loa DIN phai la HAI chan du lieu khac nhau");
+static_assert(!piPinIsFlash(PIN_I2C_SDA) && !piPinIsFlash(PIN_I2C_SCL) &&
+              !piPinInputOnly(PIN_I2C_SDA) && !piPinInputOnly(PIN_I2C_SCL),
+              "I2C LCD khong duoc dung GPIO6..11 hoac GPIO34..39");
+static_assert(PIN_I2C_SDA != PIN_I2C_SCL,
+              "I2C SDA va SCL phai la hai chan khac nhau");
+static_assert(LCD_I2C_ADDRESS == 0 || LCD_I2C_ADDRESS == 0x27 ||
+              LCD_I2C_ADDRESS == 0x3F,
+              "LCD_I2C_ADDRESS chi nen la 0(auto), 0x27 hoac 0x3F");
 static_assert(AUDIO_SAMPLE_RATE == 16000,
               "Ban Pi nay khoa PCM 16 kHz de vua ca hai chieu UART");
 

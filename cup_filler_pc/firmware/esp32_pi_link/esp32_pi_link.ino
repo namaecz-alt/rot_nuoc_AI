@@ -13,6 +13,7 @@
 //    Relay GPIO27, tích cực mức CAO
 //    INMP441 mic -> AUDIO_CHUNK PCM lên Pi
 //    Pi -> SPEAKER_AUDIO PCM xuống ESP32 -> MAX98357A -> loa
+//    LCD 2004 I2C GPIO21/22 -> trạng thái máy, mức chọn và tiến trình rót
 //
 //  GÓI TRẠNG THÁI NGÕ VÀO (MSG=0x10) có payload đúng thứ tự yêu cầu:
 //      [sensor][START][level1][level2][level3]
@@ -24,6 +25,8 @@
 //  hoặc quá thời gian đều ngắt relay, không chờ Pi.
 // ===========================================================================
 #include <Arduino.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "pi_config.h"
 #include "pi_protocol.h"
@@ -31,11 +34,17 @@
 #include "inputs.h"
 #include "pump_pi.h"
 #include "audio_duplex.h"
+#if USE_LCD_2004
+#include "lcd_2004_i2c.h"
+#endif
 
 static PiLink g_link;
 static InputBank g_inputs;
 static PiPump g_pump;
 static AudioDuplex g_audio;
+#if USE_LCD_2004
+static Lcd2004 g_lcd;
+#endif
 
 static uint8_t g_state = proto::ST_BOOT;
 static bool g_piHelloAck = false;
@@ -50,6 +59,7 @@ static uint32_t g_tLastHello = 0;
 static uint32_t g_tLastStatus = 0;
 static uint32_t g_tLastProgress = 0;
 static uint32_t g_tLastInputState = 0;
+static uint32_t g_tLastLcd = 0;
 static uint32_t g_tCupPlaced = 0;
 static uint32_t g_tLastCupRetry = 0;
 static bool g_waitErrorSent = false;
@@ -134,6 +144,103 @@ static void updateLed(uint32_t now) {
     default:                on = ((now / 50) % 2) == 0; break;
   }
   digitalWrite(PIN_LED, on ? HIGH : LOW);
+#else
+  (void)now;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+//  LCD 2004 I2C: chi hien thi, khong tham gia dieu khien/an toan
+//  HD44780 khong co dau tieng Viet nen noi dung dung ASCII khong dau.
+// ---------------------------------------------------------------------------
+static void beginLcd() {
+#if USE_LCD_2004
+  bool ok = g_lcd.begin(PIN_I2C_SDA, PIN_I2C_SCL, LCD_I2C_FREQ_HZ,
+                        LCD_I2C_ADDRESS);
+  if (ok) {
+    char uartLine[21];
+    snprintf(uartLine, sizeof(uartLine), "UART: %lu",
+             (unsigned long)PI_UART_BAUD);
+    g_lcd.show("MAY ROT NUOC AI",
+               "ESP32 + CAMERA",
+               uartLine,
+               "DANG KHOI DONG...");
+  }
+#if DEBUG_SERIAL
+  if (ok) {
+    Serial.print("[LCD] 2004 I2C tai 0x");
+    Serial.println(g_lcd.address(), HEX);
+  } else {
+    Serial.println("[LCD] Khong thay LCD 2004 o 0x27/0x3F (van chay tiep)");
+  }
+#endif
+#endif
+}
+
+static const char *lcdStateLine() {
+  switch (g_state) {
+    case proto::ST_BOOT:    return "DANG KHOI DONG...";
+    case proto::ST_WAIT_PC: return "CHO CAMERA XAC NHAN";
+    case proto::ST_READY:   return "SAN SANG: NHAN START";
+    case proto::ST_DONE:    return "ROT XONG! LAY COC RA";
+    case proto::ST_FAULT:   return "LOI: KIEM TRA MAY";
+    case proto::ST_MANUAL:  return "CHE DO THU CONG";
+    case proto::ST_IDLE:
+    default:                return "CHO DAT COC";
+  }
+}
+
+static void updateLcd(uint32_t now) {
+#if USE_LCD_2004
+  if (!g_lcd.available()) return;
+  if ((now - g_tLastLcd) < LCD_UPDATE_MS) return;
+  g_tLastLcd = now;
+
+  InputSnapshot s = g_inputs.snapshot();
+  bool linkOk = g_link.everRx() &&
+                ((now - g_link.lastRxMs()) < LINK_TIMEOUT_MS);
+  uint8_t levelPct = 0;
+  if (g_selectedLevel < N_LEVEL_BUTTONS) {
+    levelPct = LEVEL_PERCENT[g_selectedLevel];
+  }
+
+  char lineState[21];
+  if (g_state == proto::ST_POURING) {
+    uint16_t pct = 0;
+    float target = g_pump.targetMl();
+    if (target > 0.0f) {
+      float raw = 100.0f * g_pump.pouredMl() / target;
+      if (raw < 0.0f) raw = 0.0f;
+      if (raw > 100.0f) raw = 100.0f;
+      pct = (uint16_t)(raw + 0.5f);
+    }
+    // Dau ~ de phan biet % ESP uoc luong theo ml voi % camera do tren host.
+    snprintf(lineState, sizeof(lineState), "DANG ROT: ~%u%%",
+             (unsigned int)pct);
+  } else {
+    strncpy(lineState, lcdStateLine(), sizeof(lineState) - 1);
+    lineState[sizeof(lineState) - 1] = '\0';
+  }
+
+  char linePump[21];
+  snprintf(linePump, sizeof(linePump), "MUC:%u%% BOM:%s%u%%",
+           (unsigned int)levelPct,
+           g_pump.relayOn() ? "ON " : "OFF",
+           (unsigned int)g_pump.duty());
+
+  char lineLink[21];
+  if (g_state == proto::ST_POURING) {
+    snprintf(lineLink, sizeof(lineLink), "ML:%u/%u HT:%s",
+             (unsigned int)roundMl(g_pump.pouredMl()),
+             (unsigned int)roundMl(g_pump.targetMl()),
+             linkOk ? "OK" : "MAT");
+  } else {
+    snprintf(lineLink, sizeof(lineLink), "COC:%s HOST:%s",
+             s.sensor ? "CO" : "CHUA",
+             linkOk ? "OK" : "MAT");
+  }
+
+  g_lcd.show("MAY ROT NUOC AI", lineState, linePump, lineLink);
 #else
   (void)now;
 #endif
@@ -456,6 +563,7 @@ void setup() {
 
   g_link.begin();
   g_inputs.begin(millis());
+  beginLcd();                                  // khong co LCD van chay tiep
 
   g_audio.setMicCallback(onMicChunk, NULL);
   if (!g_audio.begin()) {
@@ -561,6 +669,7 @@ void loop() {
     sendProgress();
   }
 
+  updateLcd(now);
   updateLed(now);
   delay(1);                                    // nhường CPU/watchdog; audio ở core 0
 }
